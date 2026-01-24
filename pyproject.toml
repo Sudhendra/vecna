@@ -30,13 +30,15 @@ dependencies = [
     "rich>=13.7.0",
     "click>=8.1.0",
     "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+    "aiohttp>=3.9.0",
 ]
 
 [project.optional-dependencies]
 # OpenAI is used ONLY for embeddings (optional, falls back to local)
 embeddings = ["openai>=1.0.0"]
 groq = ["groq>=0.4.0"]
-ollama = ["aiohttp>=3.9.0"]
+ollama = []  # aiohttp now in base dependencies
 local = ["transformers>=4.36.0", "torch>=2.0.0", "sentence-transformers>=2.2.0"]
 # PostgreSQL + Redis memory substrate
 postgres = [
@@ -49,7 +51,6 @@ postgres = [
 all = [
     "openai>=1.0.0",  # For embeddings only
     "groq>=0.4.0",
-    "aiohttp>=3.9.0",
     "transformers>=4.36.0",
     "torch>=2.0.0",
     "sentence-transformers>=2.2.0",
