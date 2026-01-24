@@ -1,0 +1,217 @@
+/* Vecna Theme - Stranger Things Red Aesthetic */
+
+:root {
+  /* Primary Vecna colors */
+  --vecna-blood-red: #ff0000;
+  --vecna-crimson: #cc0000;
+  --vecna-deep-red: #990000;
+  --vecna-glow: #ff3333;
+  --vecna-rift-orange: #ff6600;
+  --vecna-dark: #1a0000;
+  --vecna-darker: #0d0000;
+  
+  /* Override Material theme accent */
+  --md-accent-fg-color: var(--vecna-blood-red);
+  --md-accent-fg-color--transparent: rgba(255, 0, 0, 0.1);
+}
+
+/* Dark mode enhancements */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #1a1a1a;
+  --md-default-bg-color--light: #242424;
+  --md-default-bg-color--lighter: #2e2e2e;
+  --md-default-bg-color--lightest: #383838;
+  
+  /* Red accents */
+  --md-primary-fg-color: var(--vecna-crimson);
+  --md-primary-fg-color--light: var(--vecna-blood-red);
+  --md-primary-fg-color--dark: var(--vecna-deep-red);
+  
+  /* Code blocks */
+  --md-code-bg-color: #0d0d0d;
+  --md-code-fg-color: #e0e0e0;
+}
+
+/* Header styling */
+.md-header {
+  background: linear-gradient(135deg, var(--vecna-darker) 0%, var(--vecna-dark) 100%);
+  border-bottom: 1px solid var(--vecna-deep-red);
+}
+
+.md-header__title {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* Navigation tabs */
+.md-tabs {
+  background: var(--vecna-darker);
+  border-bottom: 1px solid rgba(255, 0, 0, 0.2);
+}
+
+.md-tabs__link--active {
+  border-bottom: 2px solid var(--vecna-blood-red);
+}
+
+/* Sidebar navigation */
+.md-nav__link:hover {
+  color: var(--vecna-glow);
+}
+
+.md-nav__link--active {
+  color: var(--vecna-blood-red);
+  font-weight: 600;
+}
+
+/* Admonitions */
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-color: var(--vecna-blood-red);
+}
+
+.md-typeset .admonition.note > .admonition-title,
+.md-typeset details.note > summary {
+  background-color: rgba(255, 0, 0, 0.1);
+}
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-color: var(--vecna-rift-orange);
+}
+
+.md-typeset .admonition.danger,
+.md-typeset details.danger {
+  border-color: var(--vecna-blood-red);
+  background-color: rgba(255, 0, 0, 0.05);
+}
+
+/* Code blocks */
+.md-typeset pre > code {
+  border-left: 3px solid var(--vecna-deep-red);
+}
+
+.md-typeset code {
+  background-color: rgba(255, 0, 0, 0.05);
+  border: 1px solid rgba(255, 0, 0, 0.1);
+}
+
+/* Tables */
+.md-typeset table:not([class]) th {
+  background-color: var(--vecna-dark);
+  color: var(--vecna-glow);
+}
+
+.md-typeset table:not([class]) tr:hover {
+  background-color: rgba(255, 0, 0, 0.05);
+}
+
+/* Blockquotes */
+.md-typeset blockquote {
+  border-left: 4px solid var(--vecna-blood-red);
+  background: rgba(255, 0, 0, 0.03);
+  padding: 1rem;
+  font-style: italic;
+}
+
+/* Links */
+.md-typeset a {
+  color: var(--vecna-glow);
+}
+
+.md-typeset a:hover {
+  color: var(--vecna-blood-red);
+  text-decoration: underline;
+}
+
+/* Search */
+.md-search__form {
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 0, 0, 0.2);
+}
+
+.md-search__form:hover {
+  border-color: var(--vecna-blood-red);
+}
+
+/* Footer */
+.md-footer {
+  background: var(--vecna-darker);
+  border-top: 1px solid var(--vecna-deep-red);
+}
+
+/* Mermaid diagrams */
+.mermaid {
+  background: transparent !important;
+}
+
+/* Custom Vecna classes */
+.vecna-highlight {
+  background: linear-gradient(90deg, transparent, rgba(255, 0, 0, 0.1), transparent);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+}
+
+.vecna-quote {
+  font-size: 1.2em;
+  color: var(--vecna-glow);
+  text-align: center;
+  padding: 2rem;
+  border: 1px solid var(--vecna-deep-red);
+  background: rgba(255, 0, 0, 0.02);
+  margin: 2rem 0;
+}
+
+/* ASCII art styling */
+.vecna-ascii {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--vecna-blood-red);
+  background: var(--vecna-darker);
+  padding: 1rem;
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.2;
+}
+
+/* Status badges */
+.vecna-status {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: 600;
+}
+
+.vecna-status--unified {
+  background: rgba(0, 255, 0, 0.2);
+  color: #00ff00;
+}
+
+.vecna-status--mixed {
+  background: rgba(255, 165, 0, 0.2);
+  color: #ffa500;
+}
+
+.vecna-status--fractured {
+  background: rgba(255, 0, 0, 0.2);
+  color: var(--vecna-blood-red);
+}
+
+/* Diagram containers */
+.diagram-container {
+  background: var(--vecna-darker);
+  border: 1px solid var(--vecna-deep-red);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  overflow-x: auto;
+}
+
+/* Animation for emphasis */
+@keyframes vecna-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.vecna-pulse {
+  animation: vecna-pulse 2s infinite;
+}

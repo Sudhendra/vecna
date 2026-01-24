@@ -1,0 +1,120 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vecna"
+version = "0.1.0"
+description = "VECNA: Virtual Emergent Collective Neural Architecture - A hive mind for AI models"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "HiveMind Project"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["ai", "llm", "hive-mind", "multi-model", "ensemble", "collective-intelligence"]
+
+dependencies = [
+    "numpy>=1.24.0",
+    "rich>=13.7.0",
+    "click>=8.1.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+# OpenAI is used ONLY for embeddings (optional, falls back to local)
+embeddings = ["openai>=1.0.0"]
+groq = ["groq>=0.4.0"]
+ollama = ["aiohttp>=3.9.0"]
+local = ["transformers>=4.36.0", "torch>=2.0.0", "sentence-transformers>=2.2.0"]
+# PostgreSQL + Redis memory substrate
+postgres = [
+    "psycopg2-binary>=2.9.0",
+    "pgvector>=0.2.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "redis>=5.0.0",
+]
+all = [
+    "openai>=1.0.0",  # For embeddings only
+    "groq>=0.4.0",
+    "aiohttp>=3.9.0",
+    "transformers>=4.36.0",
+    "torch>=2.0.0",
+    "sentence-transformers>=2.2.0",
+    "psycopg2-binary>=2.9.0",
+    "pgvector>=0.2.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "redis>=5.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocs-minify-plugin>=0.7.0",
+    "pymdown-extensions>=10.0",
+]
+
+[project.scripts]
+vecna = "vecna.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/hivemind-project/vecna"
+Documentation = "https://github.com/hivemind-project/vecna#readme"
+Repository = "https://github.com/hivemind-project/vecna"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vecna*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests (no external services required)",
+    "integration: Integration tests (requires PostgreSQL/Redis)",
+    "e2e: End-to-end tests",
+    "requires_postgres: Tests requiring PostgreSQL",
+    "requires_redis: Tests requiring Redis",
+    "requires_docker: Tests requiring Docker",
+    "requires_copilot: Tests requiring Copilot authentication",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# Custom pytest scripts
+[tool.pytest-scripts]
+unit = "pytest -m unit -v"
+integration = "pytest -m integration -v"
+e2e = "pytest -m e2e -v"
+all = "pytest -v"
+fast = "pytest -m 'unit and not slow' -v"
+postgres = "pytest -m requires_postgres -v"
+redis = "pytest -m requires_redis -v"

@@ -1,0 +1,213 @@
+site_name: Vecna Documentation
+site_description: Technical documentation for VECNA — Virtual Emergent Collective Neural Architecture
+site_author: LightningEmperor
+site_url: https://vecna.dev/docs
+
+repo_name: vecna
+repo_url: https://github.com/lightningemperor/vecna
+
+copyright: Copyright &copy; 2025 LightningEmperor
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  language: en
+  
+  palette:
+    # Dark mode (primary)
+    - scheme: slate
+      primary: red
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    # Light mode
+    - scheme: default
+      primary: red
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  
+  font:
+    text: Inter
+    code: JetBrains Mono
+  
+  icon:
+    logo: material/brain
+    repo: fontawesome/brands/github
+  
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/lightningemperor/vecna
+  generator: false
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  
+  - Overview:
+    - overview/index.md
+    - Vision & Philosophy: overview/vision.md
+    - Key Capabilities: overview/capabilities.md
+    - Quickstart: overview/quickstart.md
+  
+  - Architecture:
+    - architecture/index.md
+    - System Topology: architecture/topology.md
+    - Data Flow & Lifecycles: architecture/data-flow.md
+    - Control Plane vs Data Plane: architecture/control-data-plane.md
+    - Consistency Model: architecture/consistency.md
+    - Failure Domains & Resilience: architecture/resilience.md
+  
+  - Substrate:
+    - substrate/index.md
+    - Substrate Model: substrate/model.md
+    - Execution & Scheduling: substrate/execution.md
+    - IO Model: substrate/io-model.md
+    - Visualization Layer: substrate/visualization.md
+    - Extension Interfaces: substrate/extensions.md
+  
+  - Memory Design:
+    - memory/index.md
+    - Memory Tiers: memory/tiers.md
+    - Retrieval Pipelines: memory/retrieval.md
+    - Storage Schema & Indexes: memory/schema.md
+    - Low-Level Memory Details: memory/low-level.md
+    - Memory Lifecycle: memory/lifecycle.md
+  
+  - Configuration:
+    - configuration/index.md
+    - HiveConfig Reference: configuration/hive-config.md
+    - ConsensusConfig Reference: configuration/consensus-config.md
+    - Environment Variables: configuration/environment.md
+    - Feature Flags: configuration/feature-flags.md
+  
+  - Usage Guides:
+    - guides/index.md
+    - CLI Reference: guides/cli.md
+    - Common Workflows: guides/workflows.md
+    - Multi-Model Setup: guides/multi-model.md
+    - Code Execution: guides/code-execution.md
+  
+  - API Reference:
+    - api/index.md
+    - HiveMind API: api/hivemind.md
+    - HiveState API: api/hivestate.md
+    - Adapters API: api/adapters.md
+    - Memory API: api/memory.md
+    - Consensus API: api/consensus.md
+  
+  # Coming Soon sections (uncomment when files are created)
+  # - Operations:
+  #   - operations/index.md
+  #   - Deployment Models: operations/deployment.md
+  #   - Scaling & Performance: operations/scaling.md
+  #   - Monitoring & Observability: operations/monitoring.md
+  #   - Logging: operations/logging.md
+  #   - Backup & Recovery: operations/backup.md
+  # 
+  # - Security:
+  #   - security/index.md
+  #   - Threat Model: security/threat-model.md
+  #   - Authentication & Authorization: security/auth.md
+  #   - Secrets Management: security/secrets.md
+  #   - Hardening Guide: security/hardening.md
+  # 
+  # - Troubleshooting:
+  #   - troubleshooting/index.md
+  #   - Common Issues: troubleshooting/common-issues.md
+  #   - Diagnostics Checklist: troubleshooting/diagnostics.md
+  #   - Error Catalog: troubleshooting/errors.md
+  #   - Debug Workflows: troubleshooting/debug.md
+  # 
+  # - Developer Guide:
+  #   - developer/index.md
+  #   - Repository Layout: developer/repo-layout.md
+  #   - Build System: developer/build.md
+  #   - Testing: developer/testing.md
+  #   - Contribution Workflow: developer/contributing.md
+  #   - Release Process: developer/releases.md
+  # 
+  # - Appendix:
+  #   - appendix/index.md
+  #   - Glossary: appendix/glossary.md
+  #   - Compatibility Matrix: appendix/compatibility.md
+  #   - Third-Party Licenses: appendix/licenses.md
+  #   - Changelog: appendix/changelog.md
