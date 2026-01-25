@@ -94,6 +94,21 @@ Working with VECNA's RLM (Reasoning-Learning-Memory) code execution system.
 
 ---
 
+### [Observability with Langfuse](observability.md)
+
+Monitor token usage, costs, and performance with Langfuse tracing.
+
+| Topic | Description |
+|-------|-------------|
+| Setup | Installing and configuring Langfuse |
+| Token tracking | Monitor prompt/completion tokens |
+| Cost analysis | Track spending across models |
+| Trace visualization | See full request lifecycle |
+
+**Best for:** Users who want visibility into LLM usage and costs.
+
+---
+
 ## Quick Reference
 
 ### Starting VECNA
@@ -141,13 +156,15 @@ graph TD
     CLI --> WORK[Practice Workflows]
     WORK --> MULTI[Configure Multi-Model]
     MULTI --> CODE[Enable Code Execution]
-    CODE --> ADV[Advanced Operations]
+    CODE --> OBS[Setup Observability]
+    OBS --> ADV[Advanced Operations]
     
     style START fill:#1a1a2e,stroke:#ff0000
     style CLI fill:#1a1a2e,stroke:#ff0000
     style WORK fill:#1a1a2e,stroke:#ff0000
     style MULTI fill:#1a1a2e,stroke:#cc0000
     style CODE fill:#1a1a2e,stroke:#cc0000
+    style OBS fill:#1a1a2e,stroke:#990000
     style ADV fill:#1a1a2e,stroke:#990000
 ```
 
@@ -157,6 +174,7 @@ graph TD
 2. **Common Workflows** - Understand usage patterns
 3. **Multi-Model Setup** - Build your hive configuration
 4. **Code Execution** - Enable verified code output
+5. **Observability** - Monitor usage and costs
 
 ---
 

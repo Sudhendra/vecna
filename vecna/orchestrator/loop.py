@@ -143,97 +143,194 @@ class HiveLoop:
 
         This runs the full hive loop until the task is complete
         or max_cycles is reached.
+
+        Includes Langfuse tracing for full request observability.
         """
+        import uuid
+        from vecna.observability.langfuse import (
+            trace_request,
+            trace_span,
+            should_trace_pipeline,
+            flush,
+        )
+
         max_cycles = max_cycles or self.config.max_cycles
 
         if not self.adapters:
             raise ValueError("No models added to hive. Use add_adapter() or add_model() first.")
 
-        # Set the task as a goal
-        goal = Goal(content=task, priority="high", status="active")
-        self.state.add_goal(goal)
+        # === LANGFUSE TRACE (using context manager) ===
+        with trace_request(
+            name="hive.think",
+            session_id=str(uuid.uuid4()),
+            input=task,
+            metadata={
+                "active_models": [a.name for a in self.adapters],
+                "max_cycles": max_cycles,
+                "use_routing": self.config.use_routing,
+                "auto_execute_code": self.config.auto_execute_code,
+            },
+            tags=["vecna", "hive-think"],
+        ) as trace_ctx:
+            try:
+                # Set the task as a goal
+                goal = Goal(content=task, priority="high", status="active")
+                self.state.add_goal(goal)
 
-        logger.info(f"Hive thinking about: {task[:100]}...")
+                logger.info(f"Hive thinking about: {task[:100]}...")
 
-        final_response = ""
+                final_response = ""
+                total_cycles = 0
 
-        for cycle in range(max_cycles):
-            self.cycle_count += 1
+                for cycle in range(max_cycles):
+                    self.cycle_count += 1
+                    total_cycles += 1
 
-            if self.config.verbose:
-                logger.info(f"=== Cycle {self.cycle_count} ===")
+                    if self.config.verbose:
+                        logger.info(f"=== Cycle {self.cycle_count} ===")
 
-            # Run one cycle
-            responses, updates = await self._run_cycle(task)
+                    # Run one cycle
+                    responses, updates = await self._run_cycle(task)
 
-            # Merge updates via consensus
-            counts = self.consensus.merge_updates(
-                updates,
-                self.state,
-                model_weights={a.name: a.weight for a in self.adapters},
-            )
+                    # === CONSENSUS SPAN ===
+                    if should_trace_pipeline():
+                        with trace_span("consensus.merge") as span:
+                            counts = self.consensus.merge_updates(
+                                updates,
+                                self.state,
+                                model_weights={a.name: a.weight for a in self.adapters},
+                            )
+                            span.set_metadata(
+                                {
+                                    "facts_added": counts.get("facts_added", 0),
+                                    "beliefs_added": counts.get("beliefs_added", 0),
+                                    "hypotheses_added": counts.get("hypotheses_added", 0),
+                                    "contradictions": counts.get("contradictions_found", 0),
+                                }
+                            )
+                    else:
+                        counts = self.consensus.merge_updates(
+                            updates,
+                            self.state,
+                            model_weights={a.name: a.weight for a in self.adapters},
+                        )
 
-            if self.config.verbose:
-                logger.info(f"Consensus: {counts}")
+                    if self.config.verbose:
+                        logger.info(f"Consensus: {counts}")
 
-            # === SELF-REFLECTION ===
-            # Run introspection after consensus merge
-            identity_event = reflect(self.state, task)
-            if identity_event and self.config.verbose and self.state.self_model:
-                logger.info(
-                    f"Identity: coherence={self.state.self_model.coherence:.2f}, "
-                    f"tone={self.state.self_model.get_tone().value}"
+                    # === SELF-REFLECTION ===
+                    if should_trace_pipeline():
+                        with trace_span("identity.reflect") as span:
+                            identity_event = reflect(self.state, task)
+                            if identity_event and self.state.self_model:
+                                span.set_metadata(
+                                    {
+                                        "coherence": self.state.self_model.coherence,
+                                        "tone": self.state.self_model.get_tone().value,
+                                        "event_type": identity_event.event_type
+                                        if identity_event
+                                        else None,
+                                    }
+                                )
+                    else:
+                        identity_event = reflect(self.state, task)
+
+                    if identity_event and self.config.verbose and self.state.self_model:
+                        logger.info(
+                            f"Identity: coherence={self.state.self_model.coherence:.2f}, "
+                            f"tone={self.state.self_model.get_tone().value}"
+                        )
+
+                    # Persist identity event to PG if configured and significant
+                    if (
+                        identity_event
+                        and self.config.persist_identity_events
+                        and self._state_manager
+                    ):
+                        try:
+                            self._state_manager.persist_identity_event(identity_event)
+                        except Exception as e:
+                            logger.warning(f"Failed to persist identity event: {e}")
+
+                    # Combine responses (take the most detailed)
+                    if responses:
+                        final_response = max(responses, key=len)
+
+                        # === CODE EXECUTION SPAN ===
+                        if self.config.auto_execute_code:
+                            try:
+                                if should_trace_pipeline():
+                                    with trace_span("code.execute") as span:
+                                        final_response, exec_results = await execute_and_inject(
+                                            final_response
+                                        )
+                                        span.set_metadata(
+                                            {
+                                                "blocks_executed": len(exec_results)
+                                                if exec_results
+                                                else 0,
+                                                "success": True,
+                                            }
+                                        )
+                                        if exec_results and self.config.verbose:
+                                            logger.info(
+                                                f"Executed {len(exec_results)} code block(s) in RLM sandbox"
+                                            )
+                                else:
+                                    final_response, exec_results = await execute_and_inject(
+                                        final_response
+                                    )
+                                    if exec_results and self.config.verbose:
+                                        logger.info(
+                                            f"Executed {len(exec_results)} code block(s) in RLM sandbox"
+                                        )
+                            except Exception as e:
+                                logger.warning(f"Code execution failed: {e}")
+
+                    # Compress memory periodically
+                    if self.cycle_count % self.config.compress_every == 0:
+                        await self._compress_memory()
+
+                    # Record history
+                    self.history.append(
+                        {
+                            "cycle": self.cycle_count,
+                            "task": task,
+                            "models_used": [u.source_model for u in updates],
+                            "counts": counts,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
+                    # Check if task is complete
+                    if self._is_task_complete(final_response, task):
+                        logger.info("Task appears complete.")
+                        break
+
+                # Mark goal complete
+                for g in self.state.goals:
+                    if g.content == task:
+                        g.status = "completed"
+
+                # Update trace with final output
+                trace_ctx.set_output(final_response[:2000] if final_response else "")
+                trace_ctx.set_metadata(
+                    {
+                        "total_cycles": total_cycles,
+                        "final_coherence": self.state.self_model.coherence
+                        if self.state.self_model
+                        else None,
+                    }
                 )
 
-            # Persist identity event to PG if configured and significant
-            if identity_event and self.config.persist_identity_events and self._state_manager:
-                try:
-                    self._state_manager.persist_identity_event(identity_event)
-                except Exception as e:
-                    logger.warning(f"Failed to persist identity event: {e}")
+                return final_response
 
-            # Combine responses (take the most detailed)
-            if responses:
-                final_response = max(responses, key=len)
-
-                # Execute any Python code blocks in the response via RLM sandbox
-                if self.config.auto_execute_code:
-                    try:
-                        final_response, exec_results = await execute_and_inject(final_response)
-                        if exec_results and self.config.verbose:
-                            logger.info(
-                                f"Executed {len(exec_results)} code block(s) in RLM sandbox"
-                            )
-                    except Exception as e:
-                        logger.warning(f"Code execution failed: {e}")
-
-            # Compress memory periodically
-            if self.cycle_count % self.config.compress_every == 0:
-                await self._compress_memory()
-
-            # Record history
-            self.history.append(
-                {
-                    "cycle": self.cycle_count,
-                    "task": task,
-                    "models_used": [u.source_model for u in updates],
-                    "counts": counts,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-
-            # Check if task is complete (simple heuristic)
-            # In practice, you'd have more sophisticated completion detection
-            if self._is_task_complete(final_response, task):
-                logger.info("Task appears complete.")
-                break
-
-        # Mark goal complete
-        for g in self.state.goals:
-            if g.content == task:
-                g.status = "completed"
-
-        return final_response
+            except Exception as e:
+                trace_ctx.set_level("ERROR")
+                trace_ctx.set_status_message(str(e))
+                raise
+            finally:
+                flush()
 
     async def _run_cycle(self, task: str) -> tuple[List[str], List[HiveUpdate]]:
         """
@@ -241,6 +338,8 @@ class HiveLoop:
 
         All selected models think in parallel, then we collect results.
         """
+        from vecna.observability.langfuse import trace_span, should_trace_pipeline
+
         # Select models for this task
         if self.config.use_routing and self.router:
             selected = self.router.select_adapters(
@@ -256,39 +355,88 @@ class HiveLoop:
         memory_context = ""
         rlm_stats = {}
 
+        # === MEMORY RETRIEVAL SPAN ===
         # Try PgMemoryStore via state manager first
         if self._state_manager:
             try:
-                pg_memory = self._state_manager._get_memory_store()
-                if pg_memory:
-                    memory_context, facets, rlm_stats = pg_memory.rlm_retrieve(
-                        task,
-                        top_k_per_facet=5,
-                        max_items=20,
-                        max_chars=4000,
-                    )
-                    if self.config.verbose and rlm_stats.get("total_items_retrieved", 0) > 0:
-                        logger.info(
-                            f"PgRLM: {rlm_stats['num_facets']} facets, "
-                            f"{rlm_stats['total_items_retrieved']} items retrieved"
+                if should_trace_pipeline():
+                    with trace_span("memory.retrieval", metadata={"source": "pg"}) as span:
+                        pg_memory = self._state_manager._get_memory_store()
+                        if pg_memory:
+                            memory_context, facets, rlm_stats = pg_memory.rlm_retrieve(
+                                task,
+                                top_k_per_facet=5,
+                                max_items=20,
+                                max_chars=4000,
+                            )
+                            span.set_metadata(
+                                {
+                                    "num_facets": rlm_stats.get("num_facets", 0),
+                                    "total_items_retrieved": rlm_stats.get(
+                                        "total_items_retrieved", 0
+                                    ),
+                                    "cache_hits": rlm_stats.get("cache_hits", 0),
+                                }
+                            )
+                            if (
+                                self.config.verbose
+                                and rlm_stats.get("total_items_retrieved", 0) > 0
+                            ):
+                                logger.info(
+                                    f"PgRLM: {rlm_stats['num_facets']} facets, "
+                                    f"{rlm_stats['total_items_retrieved']} items retrieved"
+                                )
+                else:
+                    pg_memory = self._state_manager._get_memory_store()
+                    if pg_memory:
+                        memory_context, facets, rlm_stats = pg_memory.rlm_retrieve(
+                            task,
+                            top_k_per_facet=5,
+                            max_items=20,
+                            max_chars=4000,
                         )
+                        if self.config.verbose and rlm_stats.get("total_items_retrieved", 0) > 0:
+                            logger.info(
+                                f"PgRLM: {rlm_stats['num_facets']} facets, "
+                                f"{rlm_stats['total_items_retrieved']} items retrieved"
+                            )
             except Exception as e:
                 logger.warning(f"PgMemoryStore retrieval failed: {e}")
 
         # Fall back to in-memory MemoryStore
         if not memory_context and self.memory and self.memory.items:
-            # Use RLM-style decompose → retrieve → recompose
-            memory_context, facets, rlm_stats = self.memory.rlm_retrieve(
-                task,
-                top_k_per_facet=5,
-                max_items=20,
-                max_chars=4000,
-            )
-            if self.config.verbose and rlm_stats.get("total_items_retrieved", 0) > 0:
-                logger.info(
-                    f"RLM: {rlm_stats['num_facets']} facets, "
-                    f"{rlm_stats['total_items_retrieved']} items retrieved"
+            if should_trace_pipeline():
+                with trace_span("memory.retrieval", metadata={"source": "memory"}) as span:
+                    memory_context, facets, rlm_stats = self.memory.rlm_retrieve(
+                        task,
+                        top_k_per_facet=5,
+                        max_items=20,
+                        max_chars=4000,
+                    )
+                    span.set_metadata(
+                        {
+                            "num_facets": rlm_stats.get("num_facets", 0),
+                            "total_items_retrieved": rlm_stats.get("total_items_retrieved", 0),
+                        }
+                    )
+                    if self.config.verbose and rlm_stats.get("total_items_retrieved", 0) > 0:
+                        logger.info(
+                            f"RLM: {rlm_stats['num_facets']} facets, "
+                            f"{rlm_stats['total_items_retrieved']} items retrieved"
+                        )
+            else:
+                # Use RLM-style decompose → retrieve → recompose
+                memory_context, facets, rlm_stats = self.memory.rlm_retrieve(
+                    task,
+                    top_k_per_facet=5,
+                    max_items=20,
+                    max_chars=4000,
                 )
+                if self.config.verbose and rlm_stats.get("total_items_retrieved", 0) > 0:
+                    logger.info(
+                        f"RLM: {rlm_stats['num_facets']} facets, "
+                        f"{rlm_stats['total_items_retrieved']} items retrieved"
+                    )
 
         # Get identity context for models
         identity_context = get_identity_context_for_prompt(self.state)

@@ -192,15 +192,80 @@ class BaseAdapter(ABC):
         """
         Complete think cycle: build prompt, generate, parse update.
         Returns (response_text, update).
+
+        Includes Langfuse generation tracing for token usage and latency tracking.
         """
+        import time
+        from vecna.observability.langfuse import trace_generation, is_trace_active
+        from vecna.observability.tokens import get_or_estimate_usage
+
         prompt = self.build_prompt(state, task)
-        response = await self.generate(prompt)
+
+        # Determine provider from adapter type
+        provider = self._get_provider_name()
+
+        # Use context manager for tracing if active
+        if is_trace_active():
+            with trace_generation(
+                name=f"llm.{self.name}",
+                model=self.config.model_id,
+                input=prompt,
+                model_parameters={
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens,
+                },
+                metadata={
+                    "provider": provider,
+                    "domain": self.domain,
+                    "weight": self.weight,
+                },
+            ) as gen:
+                start_time = time.time()
+                response = await self.generate(prompt)
+                end_time = time.time()
+                latency_ms = (end_time - start_time) * 1000
+
+                # Get token usage (from response or estimate)
+                usage = get_or_estimate_usage(
+                    response=getattr(self, "_last_response_data", None),
+                    provider=provider,
+                    prompt=prompt,
+                    response_text=response,
+                    model=self.config.model_id,
+                )
+
+                # Update generation with output and usage
+                gen.set_output(response)
+                gen.set_usage(
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0),
+                )
+                gen.set_metadata({"latency_ms": round(latency_ms, 2)})
+        else:
+            # No tracing, just run the generation
+            response = await self.generate(prompt)
+
+        # Parse update from response
         update = self.parse_update(response)
 
         # Extract the main response (before HIVE_UPDATE)
         main_response = response.split("<HIVE_UPDATE>")[0].strip()
 
         return main_response, update
+
+    def _get_provider_name(self) -> str:
+        """Get the provider name for this adapter (used for token extraction)."""
+        class_name = self.__class__.__name__.lower()
+        if "copilot" in class_name:
+            return "copilot"
+        elif "groq" in class_name:
+            return "groq"
+        elif "ollama" in class_name:
+            return "ollama"
+        elif "transformer" in class_name:
+            return "transformers"
+        return "unknown"
 
 
 # ============================================================
@@ -235,6 +300,10 @@ class OllamaAdapter(BaseAdapter):
                 },
             ) as response:
                 result = await response.json()
+
+                # Store response data for token usage extraction
+                self._last_response_data = result
+
                 return result.get("response", "")
 
 
@@ -322,6 +391,9 @@ class GroqAdapter(BaseAdapter):
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
         )
+
+        # Store response data for token usage extraction
+        self._last_response_data = response
 
         return response.choices[0].message.content
 
@@ -434,6 +506,10 @@ class CopilotAdapter(BaseAdapter):
             return ""
 
         message = choices[0].get("message", {})
+
+        # Store response data for token usage extraction
+        self._last_response_data = data
+
         return message.get("content", "")
 
 
