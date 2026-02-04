@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
+import tempfile
 from typing import Dict, List, Optional
 
 APPROVALS_ENV_VAR = "VECNA_APPROVALS_PATH"
+LOGGER = logging.getLogger("vecna.approvals")
 
 
 def get_approvals_path() -> Path:
@@ -45,6 +48,7 @@ class ApprovalStore:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
+            LOGGER.warning("Invalid approvals JSON at %s", self.path)
             return
         if not isinstance(data, dict):
             return
@@ -54,7 +58,20 @@ class ApprovalStore:
 
     def _save(self) -> None:
         payload = {request_id: request.to_dict() for request_id, request in self._requests.items()}
-        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                delete=False,
+                dir=self.path.parent,
+            ) as tmp_file:
+                json.dump(payload, tmp_file, indent=2)
+                tmp_path = tmp_file.name
+            os.replace(tmp_path, self.path)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     def add_request(self, request: ApprovalRequest) -> None:
         self._requests[request.request_id] = request
