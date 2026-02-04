@@ -29,7 +29,9 @@ class MemoryItem:
 
     id: Optional[str] = None
     content: str = ""
-    item_type: str = "fact"  # fact, belief, hypothesis, goal, observation, trace
+    item_type: str = (
+        "fact"  # fact, belief, hypothesis, goal, observation, trace, memory_log, curated_memory
+    )
     confidence: float = 0.5
     domain: str = "general"
     source_model: Optional[str] = None
