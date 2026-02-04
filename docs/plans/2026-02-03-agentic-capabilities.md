@@ -24,7 +24,7 @@
 - [x] Task 3: Add CLI approvals for tool requests
 - [x] Task 4: Enforce tool policy (allow/ask/deny) in ToolRuntime
 - [x] Task 5: Implement MemoryMirror (Markdown <-> PG)
-- [ ] Task 6: Add memory_search and memory_get tools
+- [x] Task 6: Add memory_search and memory_get tools
 - [ ] Task 7: Memory flush + session hook
 - [ ] Task 8: Goal queue + autonomy loop
 - [ ] Task 9: Curiosity engine (turn contradictions into goals)
