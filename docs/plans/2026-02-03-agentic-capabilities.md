@@ -27,7 +27,7 @@
 - [x] Task 6: Add memory_search and memory_get tools
 - [x] Task 7: Memory flush + session hook
 - [x] Task 8: Goal queue + autonomy loop
-- [ ] Task 9: Curiosity engine (turn contradictions into goals)
+- [x] Task 9: Curiosity engine (turn contradictions into goals)
 - [ ] Task 10: Add ReWOO planner + solver (fast path)
 - [ ] Task 11: Tool routing memory (learn which tool works)
 - [ ] Task 12: Add dream loop CLI and scheduling entrypoint
