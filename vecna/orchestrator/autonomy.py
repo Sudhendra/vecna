@@ -22,7 +22,7 @@ class AutonomyLoop(HiveLoop):
         results: List[str] = []
         while True:
             item = goal_queue.pop()
-            if not item:
+            if item is None:
                 break
             goal = item.get("goal")
             if not goal:

@@ -29,3 +29,23 @@ def test_autonomy_loop_consumes_goal_queue(tmp_path, monkeypatch):
 
     assert results == ["done:first", "done:second"]
     assert calls == [("first", 2), ("second", 2)]
+
+
+def test_autonomy_loop_skips_empty_items(tmp_path, monkeypatch):
+    q = GoalQueue(path=tmp_path / "queue.jsonl")
+    q.push({})
+    q.push({"goal": "ok"})
+
+    loop = AutonomyLoop()
+    calls = []
+
+    async def fake_think(task, max_cycles=None):
+        calls.append((task, max_cycles))
+        return f"done:{task}"
+
+    monkeypatch.setattr(loop, "think", fake_think)
+
+    results = asyncio.run(loop.run(q, max_cycles=1))
+
+    assert results == ["done:ok"]
+    assert calls == [("ok", 1)]
