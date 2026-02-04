@@ -24,6 +24,7 @@ from vecna.core.hive_state import HiveState
 from vecna.core.types import HiveUpdate, Goal
 from vecna.adapters.base import BaseAdapter, ModelConfig, create_adapter
 from vecna.memory.store import MemoryStore, MemoryCompressor
+from vecna.memory.flush import should_flush
 from vecna.orchestrator.consensus import ConsensusEngine, ConsensusConfig, DomainRouter
 from vecna.orchestrator.self_reflection import reflect, get_identity_context_for_prompt
 from vecna.tools.code_executor import execute_and_inject
@@ -315,6 +316,7 @@ class HiveLoop:
 
                     # Compress memory periodically
                     if self.cycle_count % self.config.compress_every == 0:
+                        self._maybe_flush_memory_before_compression()
                         await self._compress_memory()
 
                     # Record history
@@ -522,6 +524,20 @@ class HiveLoop:
         if removed > 0:
             logger.info(f"Removed {removed} duplicate facts")
 
+    def _maybe_flush_memory_before_compression(self) -> None:
+        if not should_flush(
+            current_tokens=len(self.state.memory_summary),
+            limit=4000,
+            soft_threshold=500,
+        ):
+            return
+
+        if self._state_manager:
+            try:
+                self._state_manager.flush_offline_spool()
+            except Exception as e:
+                logger.debug(f"Memory flush skipped: {e}")
+
     def _is_task_complete(self, response: str, task: str) -> bool:
         """
         Simple heuristic to detect if task is complete.
@@ -565,6 +581,7 @@ class HiveLoop:
                     logger.warning(f"Failed to persist identity event: {e}")
 
             if self.cycle_count % self.config.compress_every == 0:
+                self._maybe_flush_memory_before_compression()
                 await self._compress_memory()
 
             response = max(responses, key=len) if responses else ""
