@@ -513,3 +513,7 @@ def run_dream_loop(
         store.close()
 
     return result
+
+
+def run_scheduled_dream_loop(dry_run: bool = False) -> DreamResult:
+    return run_dream_loop(dry_run=dry_run)
