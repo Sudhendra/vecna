@@ -45,6 +45,7 @@ from vecna.core.state_store import (
     get_default_manager,
     PgStateManager,
 )
+from vecna.tools.approvals import ApprovalStore
 
 # Load environment variables
 load_dotenv()
@@ -1313,6 +1314,38 @@ def speak(ctx, task, no_save):
         console.print(f"\n[dim red]State saved to PostgreSQL[/dim red]")
 
     console.print()
+
+
+# ============================================================
+# TOOL APPROVAL COMMANDS
+# ============================================================
+
+
+@cli.group()
+def tools():
+    """Tool approval workflows."""
+
+
+@tools.command("pending")
+def tools_pending():
+    store = ApprovalStore()
+    pending = store.get_pending()
+    for req in pending:
+        click.echo(f"{req.request_id} {req.tool_name} {req.status}")
+
+
+@tools.command("approve")
+@click.argument("request_id")
+def tools_approve(request_id: str):
+    store = ApprovalStore()
+    store.update_status(request_id, "approved")
+
+
+@tools.command("deny")
+@click.argument("request_id")
+def tools_deny(request_id: str):
+    store = ApprovalStore()
+    store.update_status(request_id, "denied")
 
 
 # ============================================================
