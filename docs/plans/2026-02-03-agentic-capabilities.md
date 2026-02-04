@@ -31,7 +31,7 @@
 - [x] Task 10: Add ReWOO planner + solver (fast path)
 - [x] Task 11: Tool routing memory (learn which tool works)
 - [x] Task 12: Add dream loop CLI and scheduling entrypoint
-- [ ] Task 13: Document modes, memory, and autonomy
+- [x] Task 13: Document modes, memory, and autonomy
 
 ---
 
