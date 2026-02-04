@@ -8,3 +8,4 @@ def test_mirror_parses_daily_log(tmp_path):
     mirror = MemoryMirror(base_dir=tmp_path)
     items = mirror.scan_daily()
     assert items and items[0].item_type == "memory_log"
+    assert items[0].domain == "self"
