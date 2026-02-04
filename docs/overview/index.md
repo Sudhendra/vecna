@@ -34,6 +34,17 @@ All models read/write to the same state. No model "asks" another — they alread
 
 ---
 
+## Modes
+
+VECNA runs in two high-level modes, with safe tool defaults:
+
+- **Assistant**: Cooperative, goal-driven responses with tool use gated by policy.
+- **Explorer**: Curiosity-led discovery, higher initiative, but still bounded by tool policies.
+
+Tool policies default to read-only operations unless explicitly enabled for write/execute actions.
+
+---
+
 ## Section Contents
 
 <div class="grid cards" markdown>

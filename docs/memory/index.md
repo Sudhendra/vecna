@@ -65,6 +65,17 @@ flowchart TB
 
 ---
 
+## Memory Substrate
+
+VECNA maintains a dual-layer substrate:
+
+- **Markdown mirror**: Human-readable summaries and snapshots for inspection.
+- **PostgreSQL canonical**: Authoritative, queryable memory graph with pgvector.
+
+The mirror is derived from the canonical store and never overrides it.
+
+---
+
 ## Memory Types
 
 VECNA distinguishes between several types of memory:
