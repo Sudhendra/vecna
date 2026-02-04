@@ -11,6 +11,8 @@ class MemoryMirror:
     def scan_daily(self):
         items = []
         memory_dir = self.base_dir / "memory"
+        if not memory_dir.exists():
+            return []
         for path in memory_dir.glob("*.md"):
             text = path.read_text(encoding="utf-8")
             if text.strip():
