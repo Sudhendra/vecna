@@ -77,3 +77,15 @@ def test_tool_execution_records_success():
     assert result == "echo:hi"
     assert router._stats["echo"]["total"] == 1
     assert router._stats["echo"]["success"] == 1
+
+
+def test_tool_execution_accepts_raw_args_string():
+    registry = ToolRegistry(register_defaults=False)
+
+    def echo(input: str) -> str:
+        return f"ok:{input}"
+
+    registry.register("echo", echo, "Echo the provided value.")
+    runtime = ToolRuntime(registry)
+    result = runtime.execute("TOOL_CALL: echo hello")
+    assert result == "ok:hello"

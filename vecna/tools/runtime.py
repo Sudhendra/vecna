@@ -21,7 +21,10 @@ class ToolRuntime:
             try:
                 args = json.loads(remainder)
             except json.JSONDecodeError:
-                return "Invalid tool call"
+                args = {"input": remainder}
+            else:
+                if not isinstance(args, dict):
+                    return "Invalid tool call"
         if self.tool_policy and self.tool_policy.is_denied(tool_name):
             if self.audit:
                 self.audit.record(tool_name, success=False)
