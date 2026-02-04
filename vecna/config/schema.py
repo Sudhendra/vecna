@@ -337,6 +337,17 @@ class VecnaConfig:
         return self.get_active_persona()
 
     def to_dict(self) -> Dict[str, Any]:
+        agent_mode = self.agent_mode
+        if isinstance(agent_mode, str):
+            try:
+                agent_mode = AgentMode(agent_mode)
+            except ValueError:
+                logger.warning(
+                    "Invalid agent_mode '%s' in config; defaulting to 'assistant'",
+                    agent_mode,
+                )
+                agent_mode = AgentMode.assistant
+
         return {
             "config_version": self.config_version,
             "personas": {k: v.to_dict() for k, v in self.personas.items()},
@@ -348,9 +359,7 @@ class VecnaConfig:
             "max_parallel_models": self.max_parallel_models,
             "use_routing": self.use_routing,
             "auto_execute_code": self.auto_execute_code,
-            "agent_mode": self.agent_mode.value
-            if isinstance(self.agent_mode, AgentMode)
-            else self.agent_mode,
+            "agent_mode": agent_mode.value if isinstance(agent_mode, AgentMode) else agent_mode,
         }
 
     @classmethod
