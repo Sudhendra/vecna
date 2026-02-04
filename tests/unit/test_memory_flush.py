@@ -9,5 +9,7 @@ def test_should_not_flush_when_far_from_limit():
     assert should_flush(current_tokens=2000, limit=10000, soft_threshold=500) is False
 
 
-def test_estimate_token_count_splits_on_whitespace():
-    assert estimate_token_count("one two") == 2
+def test_estimate_token_count_uses_character_heuristic():
+    assert estimate_token_count("") == 0
+    assert estimate_token_count("abcd") == 1
+    assert estimate_token_count("a" * 20) == 5

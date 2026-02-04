@@ -3,4 +3,6 @@ def should_flush(current_tokens: int, limit: int, soft_threshold: int) -> bool:
 
 
 def estimate_token_count(text: str) -> int:
-    return len(text.split())
+    if not text:
+        return 0
+    return len(text) // 4
