@@ -24,6 +24,13 @@ class StorageBackend(str, Enum):
     POSTGRES = "postgres"
 
 
+class AgentMode(str, Enum):
+    """Agent autonomy mode."""
+
+    assistant = "assistant"
+    explorer = "explorer"
+
+
 @dataclass
 class MemoryConfig:
     """
@@ -290,6 +297,9 @@ class VecnaConfig:
     use_routing: bool = False  # Route by domain or use all models
     auto_execute_code: bool = True  # Execute Python code blocks in responses
 
+    # Agent autonomy settings
+    agent_mode: AgentMode = AgentMode.assistant
+
     # Version for schema migrations
     config_version: int = 2
 
@@ -334,6 +344,9 @@ class VecnaConfig:
             "max_parallel_models": self.max_parallel_models,
             "use_routing": self.use_routing,
             "auto_execute_code": self.auto_execute_code,
+            "agent_mode": self.agent_mode.value
+            if isinstance(self.agent_mode, AgentMode)
+            else self.agent_mode,
         }
 
     @classmethod
@@ -358,6 +371,13 @@ class VecnaConfig:
         memory_data = data.get("memory", {})
         memory = MemoryConfig.from_dict(memory_data) if memory_data else MemoryConfig()
 
+        agent_mode = data.get("agent_mode", AgentMode.assistant)
+        if isinstance(agent_mode, str):
+            try:
+                agent_mode = AgentMode(agent_mode)
+            except ValueError:
+                agent_mode = AgentMode.assistant
+
         return cls(
             personas=personas,
             models=models,
@@ -368,6 +388,7 @@ class VecnaConfig:
             max_parallel_models=data.get("max_parallel_models", 5),
             use_routing=data.get("use_routing", False),
             auto_execute_code=data.get("auto_execute_code", True),
+            agent_mode=agent_mode,
             config_version=data.get("config_version", 1),
         )
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from vecna.config.schema import VecnaConfig, create_default_config, ModelEntry
+from vecna.config.schema import AgentMode, VecnaConfig, create_default_config, ModelEntry
 
 logger = logging.getLogger("vecna.config")
 
@@ -68,6 +68,12 @@ def load_config(force_reload: bool = False) -> VecnaConfig:
             )
             logger.info("Migrating to new Copilot-only configuration...")
             _cached_config = create_default_config()
+            agent_mode = data.get("agent_mode")
+            if isinstance(agent_mode, str):
+                try:
+                    _cached_config.agent_mode = AgentMode(agent_mode)
+                except ValueError:
+                    pass
             save_config(_cached_config)
             logger.info(f"Config migrated to version {CURRENT_CONFIG_VERSION}")
             return _cached_config
