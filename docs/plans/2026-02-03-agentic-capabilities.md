@@ -23,7 +23,7 @@
 - [x] Task 2: Route runtime by mode (assistant vs explorer)
 - [x] Task 3: Add CLI approvals for tool requests
 - [x] Task 4: Enforce tool policy (allow/ask/deny) in ToolRuntime
-- [ ] Task 5: Implement MemoryMirror (Markdown <-> PG)
+- [x] Task 5: Implement MemoryMirror (Markdown <-> PG)
 - [ ] Task 6: Add memory_search and memory_get tools
 - [ ] Task 7: Memory flush + session hook
 - [ ] Task 8: Goal queue + autonomy loop
