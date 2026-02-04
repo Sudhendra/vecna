@@ -2404,6 +2404,21 @@ def models_show(name: str):
 # ============================================================
 
 
+@cli.group()
+def memory():
+    """Memory maintenance commands."""
+
+
+@memory.command("dream")
+@click.option("--dry-run", is_flag=True)
+def memory_dream(dry_run):
+    from vecna.memory.dream_loop import DreamLoop
+    from vecna.memory.pg_store import PgMemoryStore
+
+    loop = DreamLoop(pg_store=PgMemoryStore())
+    loop.run(dry_run=dry_run)
+
+
 @cli.group(name="mem")
 def memory_cli():
     """
