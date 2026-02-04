@@ -1338,14 +1338,16 @@ def tools_pending():
 @click.argument("request_id")
 def tools_approve(request_id: str):
     store = ApprovalStore()
-    store.update_status(request_id, "approved")
+    if not store.update_status(request_id, "approved"):
+        raise click.ClickException(f"Request '{request_id}' not found")
 
 
 @tools.command("deny")
 @click.argument("request_id")
 def tools_deny(request_id: str):
     store = ApprovalStore()
-    store.update_status(request_id, "denied")
+    if not store.update_status(request_id, "denied"):
+        raise click.ClickException(f"Request '{request_id}' not found")
 
 
 # ============================================================
