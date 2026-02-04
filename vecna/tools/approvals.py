@@ -72,7 +72,10 @@ class ApprovalStore:
                 tmp_path = tmp_file.name
             os.replace(tmp_path, self.path)
             try:
-                dir_fd = os.open(self.path.parent, os.O_DIRECTORY)
+                dir_flags = os.O_DIRECTORY | os.O_RDONLY
+                if hasattr(os, "O_CLOEXEC"):
+                    dir_flags |= os.O_CLOEXEC
+                dir_fd = os.open(self.path.parent, dir_flags)
             except OSError:
                 dir_fd = None
             if dir_fd is not None:

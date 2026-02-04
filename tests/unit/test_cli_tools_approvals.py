@@ -1,6 +1,8 @@
 import logging
 import os
 
+import pytest
+
 from click.testing import CliRunner
 
 from vecna.cli.main import cli
@@ -95,3 +97,24 @@ def test_store_fsyncs_on_save(tmp_path, monkeypatch):
     store.add_request(ApprovalRequest(request_id="req-4", tool_name="search", status="pending"))
 
     assert calls["count"] >= 1
+
+
+def test_store_fsyncs_dir_with_cloexec_flag_when_available(tmp_path, monkeypatch):
+    if not hasattr(os, "O_CLOEXEC"):
+        pytest.skip("os.O_CLOEXEC not available")
+
+    approvals_path = tmp_path / "approvals.json"
+    calls = []
+    original_open = os.open
+
+    def fake_open(path, flags, *args, **kwargs):
+        calls.append(flags)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr("vecna.tools.approvals.os.open", fake_open)
+
+    store = ApprovalStore(path=approvals_path)
+    store.add_request(ApprovalRequest(request_id="req-5", tool_name="search", status="pending"))
+
+    assert calls
+    assert any(flags & os.O_CLOEXEC for flags in calls)
