@@ -1,3 +1,6 @@
+import json
+
+from vecna.config import loader
 from vecna.config.schema import AgentMode, VecnaConfig
 
 
@@ -8,4 +11,16 @@ def test_default_agent_mode():
 
 def test_agent_mode_parsing():
     cfg = VecnaConfig(agent_mode=AgentMode.explorer)
+    assert cfg.agent_mode == AgentMode.explorer
+
+
+def test_loader_preserves_agent_mode_from_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"config_version": 2, "agent_mode": "explorer"}))
+
+    monkeypatch.setattr(loader, "get_config_path", lambda: config_path)
+    loader._cached_config = None
+
+    cfg = loader.load_config(force_reload=True)
+
     assert cfg.agent_mode == AgentMode.explorer
