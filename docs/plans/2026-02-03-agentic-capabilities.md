@@ -30,7 +30,7 @@
 - [x] Task 9: Curiosity engine (turn contradictions into goals)
 - [x] Task 10: Add ReWOO planner + solver (fast path)
 - [x] Task 11: Tool routing memory (learn which tool works)
-- [ ] Task 12: Add dream loop CLI and scheduling entrypoint
+- [x] Task 12: Add dream loop CLI and scheduling entrypoint
 - [ ] Task 13: Document modes, memory, and autonomy
 
 ---
