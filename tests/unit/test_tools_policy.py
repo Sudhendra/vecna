@@ -30,3 +30,17 @@ def test_tool_policy_allows_tool_execution_not_implemented():
     result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
     assert "not implemented" in result.lower()
     assert "denied" not in result.lower()
+
+
+def test_tool_policy_allowlist_rejects_unknown_tool():
+    registry = ToolRegistry()
+    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig(allow=["safe_tool"]))
+    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
+    assert "denied" in result.lower()
+
+
+def test_tool_policy_requires_tool_call_prefix():
+    registry = ToolRegistry()
+    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
+    result = runtime.execute('execute_code {"code": "print(1)"}')
+    assert "invalid" in result.lower()

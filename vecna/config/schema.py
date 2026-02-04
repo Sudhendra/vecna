@@ -39,6 +39,7 @@ class AgentMode(str, Enum):
 class ToolPolicyConfig:
     deny: List[str] = field(default_factory=list)
     ask: List[str] = field(default_factory=list)
+    allow: List[str] = field(default_factory=list)
 
 
 @dataclass

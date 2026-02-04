@@ -7,10 +7,12 @@ class ToolRuntime:
         self.tool_policy = ToolPolicy(tool_policy) if tool_policy else None
 
     def execute(self, tool_call: str) -> str:
-        parts = tool_call.split() if tool_call else []
-        if len(parts) < 2:
+        if not tool_call or not tool_call.startswith("TOOL_CALL:"):
             return "Invalid tool call"
-        tool_name = parts[1]
+        call_body = tool_call[len("TOOL_CALL:") :].lstrip()
+        tool_name = call_body.split(maxsplit=1)[0] if call_body else ""
+        if not tool_name:
+            return "Invalid tool call"
         if self.tool_policy and self.tool_policy.is_denied(tool_name):
             return f"Tool {tool_name} denied by policy"
         if self.tool_policy and self.tool_policy.is_ask(tool_name):
