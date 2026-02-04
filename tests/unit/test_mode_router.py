@@ -44,3 +44,8 @@ def test_run_session_delegates_to_resolve_loop(monkeypatch):
 def test_run_session_invalid_mode_raises_value_error():
     with pytest.raises(ValueError, match="Invalid agent mode"):
         asyncio.run(loop_module.run_session("hi", mode="nope"))
+
+
+def test_run_session_invalid_mode_type_raises_type_error():
+    with pytest.raises(TypeError, match="Invalid agent mode type"):
+        asyncio.run(loop_module.run_session("hi", mode=123))  # type: ignore[arg-type]
