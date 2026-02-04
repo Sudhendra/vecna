@@ -1,5 +1,7 @@
 from vecna.tools.runtime import ToolRuntime
 from vecna.tools.registry import ToolRegistry
+from vecna.tools.audit import ToolAudit
+from vecna.tools.router import ToolRouter
 from vecna.config.schema import ToolPolicyConfig
 
 
@@ -44,3 +46,18 @@ def test_tool_policy_requires_tool_call_prefix():
     runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
     result = runtime.execute('execute_code {"code": "print(1)"}')
     assert "invalid" in result.lower()
+
+
+def test_tool_policy_denied_call_records_audit_attempt():
+    router = ToolRouter()
+    audit = ToolAudit(router)
+    registry = ToolRegistry()
+    runtime = ToolRuntime(
+        registry,
+        tool_policy=ToolPolicyConfig(deny=["execute_code"]),
+        audit=audit,
+    )
+    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
+    assert "denied" in result.lower()
+    assert router._stats["execute_code"]["total"] == 1
+    assert router._stats["execute_code"]["success"] == 0

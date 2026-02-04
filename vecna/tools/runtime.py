@@ -2,9 +2,10 @@ from vecna.tools.permissions import ToolPolicy
 
 
 class ToolRuntime:
-    def __init__(self, registry, tool_policy=None) -> None:
+    def __init__(self, registry, tool_policy=None, audit=None) -> None:
         self.registry = registry
         self.tool_policy = ToolPolicy(tool_policy) if tool_policy else None
+        self.audit = audit
 
     def execute(self, tool_call: str) -> str:
         if not tool_call or not tool_call.startswith("TOOL_CALL:"):
@@ -14,7 +15,11 @@ class ToolRuntime:
         if not tool_name:
             return "Invalid tool call"
         if self.tool_policy and self.tool_policy.is_denied(tool_name):
+            if self.audit:
+                self.audit.record(tool_name, success=False)
             return f"Tool {tool_name} denied by policy"
         if self.tool_policy and self.tool_policy.is_ask(tool_name):
+            if self.audit:
+                self.audit.record(tool_name, success=False)
             return f"Tool {tool_name} requires approval"
         return "Tool execution not implemented"
