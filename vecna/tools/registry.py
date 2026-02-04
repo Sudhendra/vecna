@@ -1,6 +1,8 @@
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, register_defaults: bool = True) -> None:
         self.tools = {}
+        if register_defaults:
+            self.register_defaults()
 
     def register(self, name: str, func, description: str) -> None:
         self.tools[name] = {
