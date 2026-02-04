@@ -36,6 +36,12 @@ class AgentMode(str, Enum):
 
 
 @dataclass
+class ToolPolicyConfig:
+    deny: List[str] = field(default_factory=list)
+    ask: List[str] = field(default_factory=list)
+
+
+@dataclass
 class MemoryConfig:
     """
     Configuration for Vecna's memory substrate.
