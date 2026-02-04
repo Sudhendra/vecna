@@ -25,7 +25,7 @@
 - [x] Task 4: Enforce tool policy (allow/ask/deny) in ToolRuntime
 - [x] Task 5: Implement MemoryMirror (Markdown <-> PG)
 - [x] Task 6: Add memory_search and memory_get tools
-- [ ] Task 7: Memory flush + session hook
+- [x] Task 7: Memory flush + session hook
 - [ ] Task 8: Goal queue + autonomy loop
 - [ ] Task 9: Curiosity engine (turn contradictions into goals)
 - [ ] Task 10: Add ReWOO planner + solver (fast path)
