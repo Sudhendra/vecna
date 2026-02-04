@@ -11,5 +11,6 @@ def test_should_not_flush_when_far_from_limit():
 
 def test_estimate_token_count_uses_character_heuristic():
     assert estimate_token_count("") == 0
-    assert estimate_token_count("abcd") == 1
-    assert estimate_token_count("a" * 20) == 5
+    assert estimate_token_count("a") == 1
+    assert estimate_token_count("abcd") == (len("abcd") + 3) // 4
+    assert estimate_token_count("a" * 20) == (len("a" * 20) + 3) // 4
