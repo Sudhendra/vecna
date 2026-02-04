@@ -85,9 +85,11 @@ class HiveLoop:
         self,
         config: Optional[HiveConfig] = None,
         adapters: Optional[List[BaseAdapter]] = None,
+        name: str = "assistant",
     ):
         self.config = config or HiveConfig()
         self.adapters: List[BaseAdapter] = adapters or []
+        self.name = name
 
         # Core components
         self.state = HiveState()
@@ -331,6 +333,9 @@ class HiveLoop:
                 raise
             finally:
                 flush()
+
+    async def run_session(self, task: str, max_cycles: Optional[int] = None) -> str:
+        return await self.think(task, max_cycles=max_cycles)
 
     async def _run_cycle(self, task: str) -> tuple[List[str], List[HiveUpdate]]:
         """
