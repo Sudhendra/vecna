@@ -321,3 +321,10 @@ class TestHiveIdentityPrompt:
         assert "HIVE_UPDATE" in HIVE_IDENTITY_PROMPT
         assert "new_facts" in HIVE_IDENTITY_PROMPT
         assert "belief_changes" in HIVE_IDENTITY_PROMPT
+
+    def test_prompt_includes_tool_instructions(self):
+        """Test that prompt contains tool call instructions."""
+        update_index = HIVE_IDENTITY_PROMPT.rfind("</HIVE_UPDATE>")
+        assert update_index != -1
+        assert "TOOL_CALL" in HIVE_IDENTITY_PROMPT
+        assert HIVE_IDENTITY_PROMPT.find("TOOL_CALL") > update_index

@@ -107,6 +107,11 @@ overall_confidence: 0.8
 </HIVE_UPDATE>
 
 If you have no updates, still include an empty <HIVE_UPDATE></HIVE_UPDATE> block.
+
+## TOOL CALLS
+If you need to use a tool, only call tools listed under AVAILABLE TOOLS.
+Use the exact format:
+<TOOL_CALL>{{"name":"tool_name","args":{{...}}}}</TOOL_CALL>
 """
 
 
