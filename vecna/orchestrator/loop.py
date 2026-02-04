@@ -32,6 +32,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vecna.hive")
 
 
+async def run_session(task: str, mode, max_cycles: Optional[int] = None) -> str:
+    from vecna.config.schema import AgentMode
+    from vecna.orchestrator.mode_router import resolve_loop
+
+    loop = resolve_loop(mode or AgentMode.assistant)
+    return await loop.think(task, max_cycles=max_cycles)
+
+
 @dataclass
 class HiveConfig:
     """Configuration for the hive mind."""
