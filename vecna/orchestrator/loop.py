@@ -12,13 +12,14 @@ The result: a single unified mind emerging from many.
 """
 
 import asyncio
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable, Any, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import logging
 import os
 
+from vecna.config.schema import AgentMode
 from vecna.core.hive_state import HiveState
 from vecna.core.types import HiveUpdate, Goal
 from vecna.adapters.base import BaseAdapter, ModelConfig, create_adapter
@@ -32,11 +33,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vecna.hive")
 
 
-async def run_session(task: str, mode, max_cycles: Optional[int] = None) -> str:
-    from vecna.config.schema import AgentMode
+async def run_session(
+    task: str,
+    mode: Optional[Union[AgentMode, str]] = None,
+    max_cycles: Optional[int] = None,
+) -> str:
     from vecna.orchestrator.mode_router import resolve_loop
 
-    loop = resolve_loop(mode or AgentMode.assistant)
+    if mode is None:
+        mode_value = AgentMode.assistant
+    elif isinstance(mode, AgentMode):
+        mode_value = mode
+    elif isinstance(mode, str):
+        try:
+            mode_value = AgentMode(mode)
+        except ValueError as exc:
+            raise ValueError(f"Invalid agent mode: {mode}") from exc
+    else:
+        raise TypeError(f"Invalid agent mode type: {type(mode).__name__}")
+
+    loop = resolve_loop(mode_value)
     return await loop.think(task, max_cycles=max_cycles)
 
 
