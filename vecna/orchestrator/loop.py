@@ -536,7 +536,7 @@ class HiveLoop:
             try:
                 self._state_manager.flush_offline_spool()
             except Exception as e:
-                logger.debug(f"Memory flush skipped: {e}")
+                pass
 
     def _is_task_complete(self, response: str, task: str) -> bool:
         """
