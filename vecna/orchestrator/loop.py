@@ -24,7 +24,7 @@ from vecna.core.hive_state import HiveState
 from vecna.core.types import HiveUpdate, Goal
 from vecna.adapters.base import BaseAdapter, ModelConfig, create_adapter
 from vecna.memory.store import MemoryStore, MemoryCompressor
-from vecna.memory.flush import should_flush
+from vecna.memory.flush import estimate_token_count, should_flush
 from vecna.orchestrator.consensus import ConsensusEngine, ConsensusConfig, DomainRouter
 from vecna.orchestrator.self_reflection import reflect, get_identity_context_for_prompt
 from vecna.tools.code_executor import execute_and_inject
@@ -96,6 +96,12 @@ class HiveConfig:
 
     # Persist identity events to PG on significant changes
     persist_identity_events: bool = True
+
+    # Memory summary token limit
+    memory_summary_token_limit: int = 4000
+
+    # Soft threshold for flushing memory
+    memory_flush_soft_threshold: int = 500
 
 
 class HiveLoop:
@@ -526,9 +532,9 @@ class HiveLoop:
 
     def _maybe_flush_memory_before_compression(self) -> None:
         if not should_flush(
-            current_tokens=len(self.state.memory_summary),
-            limit=4000,
-            soft_threshold=500,
+            current_tokens=estimate_token_count(self.state.memory_summary),
+            limit=self.config.memory_summary_token_limit,
+            soft_threshold=self.config.memory_flush_soft_threshold,
         ):
             return
 
