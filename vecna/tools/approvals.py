@@ -67,8 +67,21 @@ class ApprovalStore:
                 dir=self.path.parent,
             ) as tmp_file:
                 json.dump(payload, tmp_file, indent=2)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
                 tmp_path = tmp_file.name
             os.replace(tmp_path, self.path)
+            try:
+                dir_fd = os.open(self.path.parent, os.O_DIRECTORY)
+            except OSError:
+                dir_fd = None
+            if dir_fd is not None:
+                try:
+                    os.fsync(dir_fd)
+                except OSError:
+                    pass
+                finally:
+                    os.close(dir_fd)
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)

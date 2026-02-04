@@ -80,3 +80,18 @@ def test_store_uses_atomic_replace_on_save(tmp_path, monkeypatch):
     store.add_request(ApprovalRequest(request_id="req-3", tool_name="search", status="pending"))
 
     assert calls["count"] >= 1
+
+
+def test_store_fsyncs_on_save(tmp_path, monkeypatch):
+    approvals_path = tmp_path / "approvals.json"
+    calls = {"count": 0}
+
+    def fake_fsync(_fd):
+        calls["count"] += 1
+
+    monkeypatch.setattr("vecna.tools.approvals.os.fsync", fake_fsync)
+
+    store = ApprovalStore(path=approvals_path)
+    store.add_request(ApprovalRequest(request_id="req-4", tool_name="search", status="pending"))
+
+    assert calls["count"] >= 1
