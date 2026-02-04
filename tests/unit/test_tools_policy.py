@@ -30,7 +30,7 @@ def test_tool_policy_allows_tool_execution_not_implemented():
     registry = ToolRegistry()
     runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
     result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
-    assert "not implemented" in result.lower()
+    assert "not found" in result.lower()
     assert "denied" not in result.lower()
 
 
@@ -61,3 +61,19 @@ def test_tool_policy_denied_call_records_audit_attempt():
     assert "denied" in result.lower()
     assert router._stats["execute_code"]["total"] == 1
     assert router._stats["execute_code"]["success"] == 0
+
+
+def test_tool_execution_records_success():
+    registry = ToolRegistry(register_defaults=False)
+
+    def echo(value: str) -> str:
+        return f"echo:{value}"
+
+    registry.register("echo", echo, "Echo the provided value.")
+    router = ToolRouter()
+    audit = ToolAudit(router)
+    runtime = ToolRuntime(registry, audit=audit)
+    result = runtime.execute('TOOL_CALL: echo {"value": "hi"}')
+    assert result == "echo:hi"
+    assert router._stats["echo"]["total"] == 1
+    assert router._stats["echo"]["success"] == 1

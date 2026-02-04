@@ -1,4 +1,5 @@
 from vecna.tools.permissions import ToolPolicy
+import json
 
 
 class ToolRuntime:
@@ -14,6 +15,13 @@ class ToolRuntime:
         tool_name = call_body.split(maxsplit=1)[0] if call_body else ""
         if not tool_name:
             return "Invalid tool call"
+        args = None
+        remainder = call_body[len(tool_name) :].lstrip()
+        if remainder:
+            try:
+                args = json.loads(remainder)
+            except json.JSONDecodeError:
+                return "Invalid tool call"
         if self.tool_policy and self.tool_policy.is_denied(tool_name):
             if self.audit:
                 self.audit.record(tool_name, success=False)
@@ -22,4 +30,22 @@ class ToolRuntime:
             if self.audit:
                 self.audit.record(tool_name, success=False)
             return f"Tool {tool_name} requires approval"
-        return "Tool execution not implemented"
+        tool = self.registry.tools.get(tool_name)
+        if not tool:
+            if self.audit:
+                self.audit.record(tool_name, success=False)
+            return f"Tool {tool_name} not found"
+        try:
+            if args is None:
+                result = tool["func"]()
+            elif isinstance(args, dict):
+                result = tool["func"](**args)
+            else:
+                result = tool["func"](args)
+        except Exception as exc:
+            if self.audit:
+                self.audit.record(tool_name, success=False)
+            return f"Tool {tool_name} failed: {exc}"
+        if self.audit:
+            self.audit.record(tool_name, success=True)
+        return result
