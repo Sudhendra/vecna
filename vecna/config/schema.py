@@ -347,6 +347,12 @@ class VecnaConfig:
                     agent_mode,
                 )
                 agent_mode = AgentMode.assistant
+        elif not isinstance(agent_mode, AgentMode):
+            logger.warning(
+                "Invalid agent_mode '%s' in config; defaulting to 'assistant'",
+                agent_mode,
+            )
+            agent_mode = AgentMode.assistant
 
         return {
             "config_version": self.config_version,
@@ -359,7 +365,7 @@ class VecnaConfig:
             "max_parallel_models": self.max_parallel_models,
             "use_routing": self.use_routing,
             "auto_execute_code": self.auto_execute_code,
-            "agent_mode": agent_mode.value if isinstance(agent_mode, AgentMode) else agent_mode,
+            "agent_mode": agent_mode.value,
         }
 
     @classmethod

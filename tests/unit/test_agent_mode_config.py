@@ -34,6 +34,16 @@ def test_invalid_agent_mode_serialization_defaults_and_warns(caplog):
     assert any("Invalid agent_mode" in record.getMessage() for record in caplog.records)
 
 
+def test_non_string_agent_mode_serialization_defaults_and_warns(caplog):
+    cfg = VecnaConfig(agent_mode=cast(Any, 123))
+
+    with caplog.at_level(logging.WARNING, logger="vecna.config"):
+        serialized = cfg.to_dict()
+
+    assert serialized["agent_mode"] == AgentMode.assistant.value
+    assert any("Invalid agent_mode" in record.getMessage() for record in caplog.records)
+
+
 def test_loader_preserves_agent_mode_from_config(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({"config_version": 2, "agent_mode": "explorer"}))
