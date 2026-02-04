@@ -8,3 +8,25 @@ def test_tool_policy_denies():
     runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig(deny=["execute_code"]))
     result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
     assert "denied" in result.lower()
+
+
+def test_tool_policy_malformed_call_returns_error_string():
+    registry = ToolRegistry()
+    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
+    result = runtime.execute("TOOL_CALL:")
+    assert "invalid" in result.lower()
+
+
+def test_tool_policy_ask_requires_approval():
+    registry = ToolRegistry()
+    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig(ask=["execute_code"]))
+    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
+    assert "approval" in result.lower()
+
+
+def test_tool_policy_allows_tool_execution_not_implemented():
+    registry = ToolRegistry()
+    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
+    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
+    assert "not implemented" in result.lower()
+    assert "denied" not in result.lower()
