@@ -1,4 +1,5 @@
 import json
+import logging
 
 from vecna.config import loader
 from vecna.config.schema import AgentMode, VecnaConfig
@@ -12,6 +13,14 @@ def test_default_agent_mode():
 def test_agent_mode_parsing():
     cfg = VecnaConfig(agent_mode=AgentMode.explorer)
     assert cfg.agent_mode == AgentMode.explorer
+
+
+def test_invalid_agent_mode_defaults_and_warns(caplog):
+    with caplog.at_level(logging.WARNING, logger="vecna.config"):
+        cfg = VecnaConfig.from_dict({"agent_mode": "invalid"})
+
+    assert cfg.agent_mode == AgentMode.assistant
+    assert any("Invalid agent_mode" in record.getMessage() for record in caplog.records)
 
 
 def test_loader_preserves_agent_mode_from_config(tmp_path, monkeypatch):

@@ -7,6 +7,10 @@ Defines the structure for personas, models, groups, memory, and runtime settings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
+import logging
+
+
+logger = logging.getLogger("vecna.config")
 
 
 class Provider(str, Enum):
@@ -376,6 +380,10 @@ class VecnaConfig:
             try:
                 agent_mode = AgentMode(agent_mode)
             except ValueError:
+                logger.warning(
+                    "Invalid agent_mode '%s' in config; defaulting to 'assistant'",
+                    agent_mode,
+                )
                 agent_mode = AgentMode.assistant
 
         return cls(
