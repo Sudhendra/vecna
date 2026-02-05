@@ -72,6 +72,11 @@ def load_config(force_reload: bool = False) -> VecnaConfig:
             logger.info(f"Config migrated to version {CURRENT_CONFIG_VERSION}")
             return _cached_config
 
+        if (
+            "auto_execute_tools" not in data or data.get("auto_execute_tools") is None
+        ) and "auto_execute_code" in data:
+            data = {**data, "auto_execute_tools": data.get("auto_execute_code")}
+
         _cached_config = VecnaConfig.from_dict(data)
         logger.debug(f"Loaded config from {config_path}")
         return _cached_config
