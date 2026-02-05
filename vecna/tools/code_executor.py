@@ -18,9 +18,8 @@ installed via pip when detected in import statements.
 
 import re
 import ast
-import asyncio
 import logging
-from typing import Optional, List, Tuple, Set, Dict
+from typing import List, Tuple, Set, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path

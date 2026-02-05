@@ -5,52 +5,34 @@ The command-line interface for the Vecna hive mind.
 All minds become one.
 """
 
-import os
-import sys
 import asyncio
 import logging
-import click
+import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Suppress noisy INFO logs from libraries
-logging.getLogger("vecna").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("openai").setLevel(logging.WARNING)
-logging.getLogger("anthropic").setLevel(logging.WARNING)
-
+import click
+from dotenv import load_dotenv
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
-from rich.markdown import Markdown
-from dotenv import load_dotenv
 
-from vecna.visuals.theme import VecnaTheme, VECNA_THEME
+from vecna.core.state_store import PostgresStore, get_default_manager, get_default_store
+from vecna.tools.approvals import ApprovalStore
 from vecna.visuals.ascii_art import VECNA_BANNER, VECNA_GLYPH
 from vecna.visuals.boot import (
     play_boot_sequence,
-    play_mini_boot,
-    show_thinking_indicator,
     show_coherence_indicator,
-    show_models_linked,
-    show_hive_status,
     show_identity_snapshot,
-    show_rlm_indicator,
+    show_models_linked,
+    show_thinking_indicator,
 )
-from vecna.core.state_store import (
-    get_default_store,
-    PostgresStore,
-    OfflineSpoolStore,
-    get_default_manager,
-    PgStateManager,
-)
-from vecna.tools.approvals import ApprovalStore
+from vecna.visuals.theme import VECNA_THEME
 
-# Load environment variables
 load_dotenv()
 
-# Create themed console
 console = Console(theme=VECNA_THEME)
 
 # Config file path (state is stored in PostgreSQL)
@@ -194,11 +176,7 @@ def get_hive(use_config: bool = True):
     # Try config-based loading first
     if use_config:
         try:
-            from vecna.config import (
-                get_config,
-                ensure_default_config,
-                create_adapters_from_config,
-            )
+            from vecna.config import ensure_default_config, create_adapters_from_config
 
             # Ensure config exists
             vecna_config = ensure_default_config()
@@ -232,7 +210,7 @@ def get_hive(use_config: bool = True):
 
             return hive
 
-        except ImportError as e:
+        except ImportError:
             # Config module not available, fall back to legacy
             pass
         except Exception as e:
@@ -485,7 +463,7 @@ def _handle_inline_persona(args: list):
             marker = " [green]*[/green]" if name == config.active_persona else ""
             console.print(f"  [bold red]{name}[/bold red]{marker} - {persona.description[:40]}...")
 
-        console.print(f"\n[dim]Use 'persona <name>' to switch[/dim]\n")
+        console.print("\n[dim]Use 'persona <name>' to switch[/dim]\n")
     else:
         # Set persona
         name = args[0]
@@ -498,13 +476,13 @@ def _handle_inline_persona(args: list):
         persona = config.personas[name]
         console.print(f"\n{VECNA_GLYPH} [bold green]Persona: {name}[/bold green]")
         console.print(f"[dim]{persona.description}[/dim]")
-        console.print(f"[dim]Note: Restart chat to apply to new requests[/dim]\n")
+        console.print("[dim]Note: Restart chat to apply to new requests[/dim]\n")
 
 
 def _handle_inline_group(args: list):
     """Handle group command inline during chat."""
     try:
-        from vecna.config import get_config, update_active_group, get_available_model_names
+        from vecna.config import get_config, update_active_group
     except ImportError:
         console.print("[red]Config module not available.[/red]\n")
         return
@@ -526,7 +504,7 @@ def _handle_inline_group(args: list):
             marker = " [green]*[/green]" if name == config.active_group else ""
             console.print(f"  [bold red]{name}[/bold red]{marker} - {group.description[:40]}...")
 
-        console.print(f"\n[dim]Use 'group <name>' to switch[/dim]\n")
+        console.print("\n[dim]Use 'group <name>' to switch[/dim]\n")
     else:
         # Set group
         name = args[0]
@@ -540,7 +518,7 @@ def _handle_inline_group(args: list):
         console.print(f"\n{VECNA_GLYPH} [bold green]Group: {name}[/bold green]")
         console.print(f"[dim]Persona: {group.persona}[/dim]")
         console.print(f"[dim]Models: {', '.join(group.models)}[/dim]")
-        console.print(f"[dim]Note: Restart chat to apply model changes[/dim]\n")
+        console.print("[dim]Note: Restart chat to apply model changes[/dim]\n")
 
 
 def _show_inline_identity(hive, args: Optional[list] = None):
@@ -615,7 +593,7 @@ def _show_inline_identity(hive, args: Optional[list] = None):
                 f"[red]{event.trigger}[/red]: {event.summary[:50]}..."
             )
 
-        console.print(f"\n  [dim red]Use 'identity export' to export full timeline[/dim red]")
+        console.print("\n  [dim red]Use 'identity export' to export full timeline[/dim red]")
 
     console.print()
 
@@ -736,10 +714,6 @@ def _export_identity(hive):
     console.print()
 
 
-# Need to import datetime at module level
-from datetime import datetime
-
-
 def run_chat_loop(hive, no_save: bool = False):
     """
     Run an interactive chat loop with the hive mind.
@@ -766,7 +740,7 @@ def run_chat_loop(hive, no_save: bool = False):
     while True:
         try:
             # Get user input
-            user_input = console.input(f"[bold red]vecna>[/bold red] ").strip()
+            user_input = console.input("[bold red]vecna>[/bold red] ").strip()
 
             # Handle empty input
             if not user_input:
@@ -1311,7 +1285,7 @@ def speak(ctx, task, no_save):
     if not no_save:
         ensure_vecna_dir()
         _save_state(hive)
-        console.print(f"\n[dim red]State saved to PostgreSQL[/dim red]")
+        console.print("\n[dim red]State saved to PostgreSQL[/dim red]")
 
     console.print()
 
@@ -1408,8 +1382,8 @@ def auth_login():
         console.print(
             f"\n[red]1.[/red] Go to: [bold blue underline]{device_info.verification_uri}[/bold blue underline]"
         )
-        console.print(f"[red]2.[/red] Enter the code above")
-        console.print(f"[red]3.[/red] Authorize Vecna\n")
+        console.print("[red]2.[/red] Enter the code above")
+        console.print("[red]3.[/red] Authorize Vecna\n")
 
         # Try to open browser automatically
         try:
@@ -1428,7 +1402,7 @@ def auth_login():
             dots = "." * (poll_count[0] % 4)
             console.print(f"\r[dim]Waiting{dots.ljust(4)}[/dim]", end="")
 
-        token = asyncio.run(github_auth.poll_for_token(device_info, on_pending))
+        asyncio.run(github_auth.poll_for_token(device_info, on_pending))
 
         console.print("\n")
         console.print(f"{VECNA_GLYPH} [bold green]AUTHENTICATION SUCCESSFUL[/bold green]\n")
@@ -1438,7 +1412,7 @@ def auth_login():
 
         try:
             copilot = CopilotAuth()
-            copilot_token = asyncio.run(copilot.get_copilot_token())
+            asyncio.run(copilot.get_copilot_token())
             console.print("[green]Copilot access confirmed.[/green]")
 
             # Discover models
@@ -1478,10 +1452,10 @@ def auth_login():
             )
             console.print("[dim]Make sure you have an active GitHub Copilot subscription.[/dim]")
 
-        console.print(f"\n[dim]Token stored in ~/.vecna/auth.json[/dim]\n")
+        console.print("\n[dim]Token stored in ~/.vecna/auth.json[/dim]\n")
 
     except Exception as e:
-        console.print(f"\n[bold red]AUTHENTICATION FAILED[/bold red]")
+        console.print("\n[bold red]AUTHENTICATION FAILED[/bold red]")
         console.print(f"[red]{e}[/red]\n")
 
 
@@ -1490,15 +1464,12 @@ def auth_status():
     """
     Show current authentication status.
     """
-    from vecna.auth import GitHubDeviceAuth, CopilotAuth
     from vecna.auth.storage import get_auth_storage
     from vecna.visuals.ascii_art import VECNA_GLYPH
 
     console.print(f"\n{VECNA_GLYPH} [bold red]AUTHENTICATION STATUS[/bold red]\n")
 
     storage = get_auth_storage()
-    copilot = CopilotAuth()
-
     status_table = Table(show_header=False, box=None, padding=(0, 2))
     status_table.add_column(style="red", width=18)
     status_table.add_column(style="bold")
@@ -1537,24 +1508,24 @@ def auth_status():
     # Overall authentication state
     if copilot_ok:
         status_table.add_row("", "")  # Spacer
-        status_table.add_row("Overall Status", f"[bold green]READY[/bold green]")
+        status_table.add_row("Overall Status", "[bold green]READY[/bold green]")
         status_table.add_row("", "[dim]Copilot API access available[/dim]")
     elif github_token and github_token.access_token and not github_token.is_expired():
         # Have GitHub token but no Copilot token cached
         if github_token.scope == "copilot":
             status_table.add_row("", "")
-            status_table.add_row("Overall Status", f"[bold green]READY[/bold green]")
+            status_table.add_row("Overall Status", "[bold green]READY[/bold green]")
             status_table.add_row("", "[dim]Copilot token will be obtained on use[/dim]")
         else:
             status_table.add_row("", "")
-            status_table.add_row("Overall Status", f"[yellow]Limited[/yellow]")
+            status_table.add_row("Overall Status", "[yellow]Limited[/yellow]")
             status_table.add_row("", "[dim]Token may not have Copilot access.[/dim]")
             status_table.add_row(
                 "", "[dim]Run 'vecna auth import-keychain' to import VS Code token.[/dim]"
             )
     else:
         status_table.add_row("", "")  # Spacer
-        status_table.add_row("Overall Status", f"[yellow]Not authenticated[/yellow]")
+        status_table.add_row("Overall Status", "[yellow]Not authenticated[/yellow]")
         status_table.add_row(
             "", "[dim]Run 'vecna auth login' or 'vecna auth import-keychain'[/dim]"
         )
@@ -1574,9 +1545,9 @@ def auth_status():
 
     # Hint about keychain
     console.print(
-        f"\n[dim]Tip: Use 'vecna auth import-keychain' to import VS Code Copilot token[/dim]"
+        "\n[dim]Tip: Use 'vecna auth import-keychain' to import VS Code Copilot token[/dim]"
     )
-    console.print(f"[dim]     Use 'vecna auth models' to list available AI models[/dim]")
+    console.print("[dim]     Use 'vecna auth models' to list available AI models[/dim]")
 
     console.print()
 
@@ -1668,7 +1639,6 @@ def auth_import_keychain():
     """
     import platform
     from vecna.auth.storage import get_auth_storage, TokenData
-    from vecna.auth import CopilotAuth
     from vecna.visuals.ascii_art import VECNA_GLYPH
 
     if platform.system() != "Darwin":
@@ -1801,8 +1771,8 @@ def auth_import_keychain():
         )
         console.print(f"[dim]SKU: {copilot_data.get('sku', 'unknown')}[/dim]")
 
-        console.print(f"\n[dim]Token stored in ~/.vecna/auth.json[/dim]")
-        console.print(f"[dim]Run 'vecna auth models' to see available models.[/dim]\n")
+        console.print("\n[dim]Token stored in ~/.vecna/auth.json[/dim]")
+        console.print("[dim]Run 'vecna auth models' to see available models.[/dim]\n")
 
     except subprocess.TimeoutExpired:
         console.print("[red]Timeout waiting for Keychain access.[/red]")
@@ -1978,7 +1948,6 @@ def config_get(key: str):
       vecna config get max_parallel_models
     """
     from vecna.config import get_config
-    from vecna.visuals.ascii_art import VECNA_GLYPH
 
     config = get_config()
 
@@ -2124,7 +2093,7 @@ def persona_list():
 
     console.print(table)
     console.print(f"\n[dim]Active persona: {config.active_persona}[/dim]")
-    console.print(f"[dim]Use 'vecna persona set <name>' to change[/dim]\n")
+    console.print("[dim]Use 'vecna persona set <name>' to change[/dim]\n")
 
 
 @persona.command("set")
@@ -2166,7 +2135,7 @@ def persona_show(name: str):
     console.print(f"\n{VECNA_GLYPH} [bold red]PERSONA: {name}[/bold red]\n")
     console.print(f"[red]Description:[/red] {persona.description}")
     console.print(f"[red]Tone Hint:[/red] {persona.tone_hint or 'none'}")
-    console.print(f"\n[red]Prompt:[/red]")
+    console.print("\n[red]Prompt:[/red]")
     console.print(
         Panel(
             persona.prompt,
@@ -2224,7 +2193,7 @@ def groups_list():
         console.print()
 
     console.print(f"[dim]Active group: {config.active_group}[/dim]")
-    console.print(f"[dim]Use 'vecna groups set <name>' to change[/dim]\n")
+    console.print("[dim]Use 'vecna groups set <name>' to change[/dim]\n")
 
 
 @groups.command("set")
@@ -2270,7 +2239,7 @@ def groups_show(name: str):
     console.print(f"[red]Default Persona:[/red] {group.persona}")
     console.print(f"[red]Enabled:[/red] {'yes' if group.enabled else 'no'}")
 
-    console.print(f"\n[red]Models:[/red]")
+    console.print("\n[red]Models:[/red]")
     for m in group.models:
         available = (
             "[green]available[/green]" if m in available_models else "[dim]unavailable[/dim]"
@@ -2339,7 +2308,7 @@ def models_list():
 
     console.print(table)
     console.print(f"\n[dim]Available: {len(available)}/{len(config.models)} models[/dim]")
-    console.print(f"[dim]Use 'vecna models toggle <name>' to enable/disable[/dim]\n")
+    console.print("[dim]Use 'vecna models toggle <name>' to enable/disable[/dim]\n")
 
 
 @models.command("toggle")
@@ -2412,11 +2381,69 @@ def memory():
 @memory.command("dream")
 @click.option("--dry-run", is_flag=True)
 def memory_dream(dry_run):
-    from vecna.memory.dream_loop import DreamLoop
-    from vecna.memory.pg_store import PgMemoryStore
+    """Run the dream loop (memory consolidation)."""
+    from vecna.visuals.ascii_art import VECNA_GLYPH
+    from vecna.config import get_config
+    from vecna.config.schema import StorageBackend
 
-    loop = DreamLoop(pg_store=PgMemoryStore())
-    loop.run(dry_run=dry_run)
+    console.print(f"\n{VECNA_GLYPH} [bold red]DREAM LOOP[/bold red]")
+    if dry_run:
+        console.print("[yellow]DRY RUN - no changes will be made[/yellow]")
+    console.print()
+
+    config = get_config()
+    mem_config = config.memory
+
+    if mem_config.backend != StorageBackend.POSTGRES:
+        console.print("[yellow]Dream loop requires PostgreSQL backend.[/yellow]")
+        console.print("[dim]Update config.memory.backend to 'postgres'.[/dim]\n")
+        return
+
+    try:
+        from vecna.memory.dream_loop import run_dream_loop
+
+        console.print("[dim]Running memory consolidation...[/dim]\n")
+
+        result = run_dream_loop(
+            connection_string=mem_config.pg_url,
+            compress_after_days=mem_config.dream_compress_after_days,
+            decay_threshold_days=30,
+            dry_run=dry_run,
+        )
+
+        result_table = Table(show_header=False, box=None, padding=(0, 2))
+        result_table.add_column(style="red", width=22)
+        result_table.add_column(style="bold red")
+
+        result_table.add_row("Events Compressed", str(result.events_compressed))
+        result_table.add_row("Episodes Created", str(result.episodes_created))
+        result_table.add_row("Memories Reinforced", str(result.memories_reinforced))
+        result_table.add_row("Memories Decayed", str(result.memories_decayed))
+        result_table.add_row("Insights Generated", str(result.insights_generated))
+        result_table.add_row("Duration", f"{result.duration_seconds:.2f}s")
+
+        if result.errors:
+            result_table.add_row("", "")
+            result_table.add_row("[red]Errors", str(len(result.errors)))
+
+        console.print(
+            Panel(
+                result_table,
+                title=f"{VECNA_GLYPH} [bold red]DREAM RESULTS[/bold red]",
+                border_style="dark_red",
+                padding=(0, 1),
+            )
+        )
+
+        if result.errors:
+            console.print("\n[red]Errors:[/red]")
+            for error in result.errors:
+                console.print(f"  [dim red]{error}[/dim red]")
+
+        console.print()
+
+    except Exception as e:
+        console.print(f"[bold red]ERROR:[/bold red] {e}\n")
 
 
 @cli.group(name="mem")
@@ -2749,8 +2776,10 @@ def memory_export(fmt: str, output: Optional[str], since: Optional[str]):
         else:
             # Parquet export (requires pyarrow)
             try:
-                import pyarrow as pa
-                import pyarrow.parquet as pq
+                import importlib
+
+                pa = importlib.import_module("pyarrow")
+                pq = importlib.import_module("pyarrow.parquet")
 
                 table = pa.Table.from_pylist(items)
                 pq.write_table(table, output)
@@ -2791,7 +2820,7 @@ def memory_init():
         console.print("[dim]Set VECNA_PG_URL environment variable or config.memory.pg_url[/dim]\n")
         return
 
-    console.print(f"[dim]Running Alembic migrations...[/dim]")
+    console.print("[dim]Running Alembic migrations...[/dim]")
 
     try:
         import subprocess
@@ -2821,7 +2850,7 @@ def memory_init():
             console.print(f"\n{VECNA_GLYPH} [bold green]MIGRATIONS COMPLETE[/bold green]")
             console.print(result.stdout)
         else:
-            console.print(f"[bold red]MIGRATION FAILED[/bold red]")
+            console.print("[bold red]MIGRATION FAILED[/bold red]")
             console.print(result.stderr)
 
     except FileNotFoundError:
@@ -2906,79 +2935,8 @@ def memory_config():
         )
     )
 
-    console.print(f"\n[dim]Edit ~/.vecna/config.json to change memory settings[/dim]")
-    console.print(f"[dim]Or set VECNA_PG_URL / VECNA_REDIS_URL environment variables[/dim]\n")
-
-
-@memory_cli.command("dream")
-@click.option("--dry-run", is_flag=True, help="Show what would be done without making changes")
-@click.option("--compress-days", default=7, help="Compress events older than N days")
-@click.option("--decay-days", default=30, help="Decay memories not accessed in N days")
-def memory_dream(dry_run: bool, compress_days: int, decay_days: int):
-    """Run the dream loop (memory consolidation)."""
-    from vecna.visuals.ascii_art import VECNA_GLYPH
-    from vecna.config import get_config
-    from vecna.config.schema import StorageBackend
-
-    console.print(f"\n{VECNA_GLYPH} [bold red]DREAM LOOP[/bold red]")
-    if dry_run:
-        console.print("[yellow]DRY RUN - no changes will be made[/yellow]")
-    console.print()
-
-    config = get_config()
-    mem_config = config.memory
-
-    if mem_config.backend != StorageBackend.POSTGRES:
-        console.print("[yellow]Dream loop requires PostgreSQL backend.[/yellow]")
-        console.print("[dim]Update config.memory.backend to 'postgres'.[/dim]\n")
-        return
-
-    try:
-        from vecna.memory.dream_loop import run_dream_loop
-
-        console.print("[dim]Running memory consolidation...[/dim]\n")
-
-        result = run_dream_loop(
-            connection_string=mem_config.pg_url,
-            compress_after_days=compress_days,
-            decay_threshold_days=decay_days,
-            dry_run=dry_run,
-        )
-
-        # Show results
-        result_table = Table(show_header=False, box=None, padding=(0, 2))
-        result_table.add_column(style="red", width=22)
-        result_table.add_column(style="bold red")
-
-        result_table.add_row("Events Compressed", str(result.events_compressed))
-        result_table.add_row("Episodes Created", str(result.episodes_created))
-        result_table.add_row("Memories Reinforced", str(result.memories_reinforced))
-        result_table.add_row("Memories Decayed", str(result.memories_decayed))
-        result_table.add_row("Insights Generated", str(result.insights_generated))
-        result_table.add_row("Duration", f"{result.duration_seconds:.2f}s")
-
-        if result.errors:
-            result_table.add_row("", "")
-            result_table.add_row("[red]Errors", str(len(result.errors)))
-
-        console.print(
-            Panel(
-                result_table,
-                title=f"{VECNA_GLYPH} [bold red]DREAM RESULTS[/bold red]",
-                border_style="dark_red",
-                padding=(0, 1),
-            )
-        )
-
-        if result.errors:
-            console.print(f"\n[red]Errors:[/red]")
-            for error in result.errors:
-                console.print(f"  [dim red]{error}[/dim red]")
-
-        console.print()
-
-    except Exception as e:
-        console.print(f"[bold red]ERROR:[/bold red] {e}\n")
+    console.print("\n[dim]Edit ~/.vecna/config.json to change memory settings[/dim]")
+    console.print("[dim]Or set VECNA_PG_URL / VECNA_REDIS_URL environment variables[/dim]\n")
 
 
 # ============================================================

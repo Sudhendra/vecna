@@ -346,13 +346,13 @@ class TestSemanticSearch:
 
         # Get initial retrieval count
         initial = pg_memory_store.get_item(item_ids[0])
-        initial_count = initial.retrieval_count
 
         # Perform search that should return this item
+        assert initial is not None
         pg_memory_store.search(initial.content[:50], top_k=5)
 
         # Check if count increased
-        updated = pg_memory_store.get_item(item_ids[0])
+        _ = pg_memory_store.get_item(item_ids[0])
         # Note: count may not increase if item not in top results
         # This is expected behavior
 

@@ -12,11 +12,10 @@ They test the full state management functionality including:
 
 import pytest
 import uuid
-from datetime import datetime
 
 from vecna.core.state_store import PgStateManager, PostgresStore
 from vecna.core.hive_state import HiveState
-from vecna.core.types import Fact, Belief, Hypothesis, Goal, OpenQuestion
+from vecna.core.types import Fact, Belief, Hypothesis
 
 
 # ============================================================
@@ -227,7 +226,7 @@ class TestPgStateManager:
         key = f"test-load-{uuid.uuid4()}"
 
         # Initially should be None
-        state = pg_state_manager.load_state(key)
+        _ = pg_state_manager.load_state(key)
         # May be None or return existing state
 
         # Save a new state

@@ -12,13 +12,15 @@ Inspired by how biological memory consolidation works during sleep.
 """
 
 import logging
-import hashlib
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, TYPE_CHECKING
 from datetime import datetime, timedelta
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 
 logger = logging.getLogger("vecna.memory.dream_loop")
+
+if TYPE_CHECKING:
+    from vecna.memory.pg_store import PgMemoryStore
 
 
 @dataclass
@@ -31,11 +33,7 @@ class DreamResult:
     memories_decayed: int = 0
     insights_generated: int = 0
     duration_seconds: float = 0.0
-    errors: List[str] = None
-
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
+    errors: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -60,7 +58,7 @@ class DreamLoop:
 
     def __init__(
         self,
-        pg_store: "PgMemoryStore" = None,
+        pg_store: Optional["PgMemoryStore"] = None,
         compress_after_days: int = 7,
         decay_threshold_days: int = 30,
         reinforcement_threshold: float = 0.7,
@@ -480,7 +478,7 @@ Summary:"""
 
 
 def run_dream_loop(
-    connection_string: str = None,
+    connection_string: Optional[str] = None,
     compress_after_days: int = 7,
     decay_threshold_days: int = 30,
     dry_run: bool = False,

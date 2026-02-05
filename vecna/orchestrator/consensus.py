@@ -8,7 +8,6 @@ reconciles different model outputs into a unified mental state.
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
-import re
 
 from vecna.core.types import HiveUpdate, Fact, Belief, Contradiction
 from vecna.core.hive_state import HiveState

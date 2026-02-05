@@ -8,13 +8,11 @@ Lightweight animated boot sequence for the Vecna CLI.
 import time
 from typing import Optional, TYPE_CHECKING
 from rich.console import Console
-from rich.text import Text
 from rich.align import Align
 from rich.panel import Panel
 from rich.table import Table
 
 from vecna.visuals.ascii_art import VECNA_BANNER, BOOT_FRAMES, VECNA_GLYPH
-from vecna.visuals.theme import VecnaTheme
 
 if TYPE_CHECKING:
     from vecna.core.hive_state import HiveState

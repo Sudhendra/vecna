@@ -5,11 +5,10 @@ These define the "contract" — the shared mental state that makes all models ON
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from datetime import datetime
 from enum import Enum
 import uuid
-import json
 
 
 class ConfidenceLevel(Enum):

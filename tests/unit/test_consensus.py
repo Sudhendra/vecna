@@ -11,12 +11,9 @@ Tests:
 """
 
 import pytest
-from datetime import datetime
 
-from vecna.orchestrator.consensus import ConsensusEngine, ConsensusConfig, DomainRouter
-from vecna.core.hive_state import HiveState
-from vecna.core.types import HiveUpdate, Fact, Belief
-from vecna.adapters.base import ModelConfig, BaseAdapter
+from vecna.orchestrator.consensus import ConsensusConfig, DomainRouter
+from vecna.core.types import HiveUpdate
 
 
 class TestConsensusConfig:

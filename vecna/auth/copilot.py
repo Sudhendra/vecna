@@ -8,15 +8,14 @@ Handles:
 4. System-level token discovery (keychain, config files)
 """
 
-import asyncio
 import aiohttp
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from vecna.auth.storage import AuthStorage, TokenData, get_auth_storage
 from vecna.auth.github import GitHubDeviceAuth
-from vecna.auth.system import SystemTokenDiscovery, DiscoveredToken, discover_github_token
+from vecna.auth.system import SystemTokenDiscovery, DiscoveredToken
 
 
 # Copilot API endpoints

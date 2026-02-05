@@ -12,10 +12,9 @@ The result: a single unified mind emerging from many.
 """
 
 import asyncio
-from typing import List, Dict, Optional, Callable, Any, Union
+from typing import List, Dict, Optional, Callable, Union
 from dataclasses import dataclass, field
 from datetime import datetime
-import json
 import logging
 import os
 
@@ -541,7 +540,7 @@ class HiveLoop:
         if self._state_manager:
             try:
                 self._state_manager.flush_offline_spool()
-            except Exception as e:
+            except Exception:
                 pass
 
     def _is_task_complete(self, response: str, task: str) -> bool:

@@ -8,7 +8,6 @@ Tests:
 - Serialization/Deserialization (to_dict, from_dict)
 """
 
-import pytest
 from datetime import datetime
 
 from vecna.core.types import (

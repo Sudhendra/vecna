@@ -90,7 +90,7 @@ class AuthStorage:
             for provider, token_data in raw_data.items():
                 if isinstance(token_data, dict):
                     self._data[provider] = TokenData.from_dict(token_data)
-        except (json.JSONDecodeError, IOError) as e:
+        except (json.JSONDecodeError, IOError):
             # Start fresh if file is corrupted
             self._data = {}
 

@@ -13,7 +13,6 @@ import json
 import numpy as np
 from datetime import datetime
 
-from vecna.core.types import Fact, Belief, Hypothesis
 from vecna.core.hive_state import HiveState
 
 

@@ -24,7 +24,6 @@ import logging
 from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 
 logger = logging.getLogger("vecna.rlm_bridge")
 
@@ -233,7 +232,6 @@ class RLMBridge:
 
         try:
             # Install packages using pip
-            packages_str = " ".join(packages)
             cmd = [
                 "docker",
                 "exec",

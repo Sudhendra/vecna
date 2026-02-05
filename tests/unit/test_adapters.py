@@ -9,7 +9,6 @@ Tests:
 """
 
 import pytest
-from datetime import datetime
 
 from vecna.adapters.base import (
     ModelConfig,
@@ -21,8 +20,6 @@ from vecna.adapters.base import (
     CopilotAdapter,
     create_adapter,
 )
-from vecna.core.hive_state import HiveState
-from vecna.core.types import HiveUpdate
 
 
 class TestModelConfig:

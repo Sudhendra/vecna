@@ -11,9 +11,9 @@ This module provides:
 The hot cache is the fastest tier in the memory substrate.
 """
 
-from typing import List, Dict, Optional, Any, Callable
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import hashlib
 import os

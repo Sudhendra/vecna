@@ -12,7 +12,6 @@ Some tests require PostgreSQL/Redis (marked accordingly).
 """
 
 import pytest
-import os
 from click.testing import CliRunner
 
 from vecna.cli.main import cli

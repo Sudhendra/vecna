@@ -8,9 +8,8 @@ Each adapter wraps a model and provides:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
-import json
 import re
 import yaml
 
@@ -187,7 +186,7 @@ class BaseAdapter(ABC):
                 except (ValueError, TypeError):
                     pass
 
-        except yaml.YAMLError as e:
+        except yaml.YAMLError:
             # If YAML parsing fails, return empty update but don't crash
             pass
 

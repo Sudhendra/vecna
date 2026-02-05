@@ -91,7 +91,7 @@ async def main():
 
     # Show the hive state
     state = hive.state
-    print(f"Hive State:")
+    print("Hive State:")
     print(f"  - Facts learned: {len(state.facts)}")
     print(f"  - Beliefs formed: {len(state.beliefs)}")
     print(f"  - Hypotheses: {len(state.hypotheses)}")

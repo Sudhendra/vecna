@@ -13,7 +13,6 @@ This module provides fixtures for:
 import os
 import pytest
 import asyncio
-from typing import Generator, Optional
 from datetime import datetime
 
 # Ensure environment variables are loaded

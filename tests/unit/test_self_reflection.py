@@ -12,7 +12,6 @@ Tests:
 """
 
 import pytest
-from datetime import datetime
 
 from vecna.orchestrator.self_reflection import (
     compute_memory_density,
@@ -26,8 +25,7 @@ from vecna.orchestrator.self_reflection import (
     reflect,
     get_identity_context_for_prompt,
 )
-from vecna.core.hive_state import HiveState
-from vecna.core.types import Fact, Belief, Hypothesis, Contradiction, IdentityTone
+from vecna.core.types import Fact, Hypothesis, Contradiction, IdentityTone
 
 
 class TestMemoryDensity:
@@ -245,7 +243,7 @@ class TestSelfModelUpdate:
 
     def test_update_self_model(self, populated_state):
         """Test updating the self-model."""
-        significant = update_self_model(populated_state)
+        update_self_model(populated_state)
 
         # First update should likely be significant
         assert populated_state.self_model.coherence > 0
