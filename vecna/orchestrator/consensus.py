@@ -251,8 +251,7 @@ class ConsensusEngine:
         for item in cluster:
             content = item.get("content", "").lower()
             is_negative = any(
-                neg in content
-                for neg in [" not ", "n't ", "never ", "false", "incorrect"]
+                neg in content for neg in [" not ", "n't ", "never ", "false", "incorrect"]
             )
             has_negation.append(is_negative)
 
