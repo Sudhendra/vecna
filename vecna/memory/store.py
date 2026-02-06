@@ -59,14 +59,17 @@ class MemoryStore:
         Lazy initialization of embedding model.
 
         Embedding routing:
-        1. If use_local=True: Use sentence-transformers (MiniLM)
+        1. If use_local=True: Raise error (sentence-transformers no longer supported)
         2. If OPENAI_API_KEY is set: Use OpenAI embeddings
-        3. Fallback: Use sentence-transformers locally
+        3. Raise error: Inform user to set OPENAI_API_KEY
         """
         import os
 
         if self.use_local:
-            return self._get_local_embedder()
+            raise RuntimeError(
+                "Local sentence-transformers embeddings are no longer supported. "
+                "Set OPENAI_API_KEY environment variable instead."
+            )
 
         # Try OpenAI if API key is available
         openai_key = os.getenv("OPENAI_API_KEY")
@@ -77,27 +80,18 @@ class MemoryStore:
 
                     self._embed_client = OpenAI(api_key=openai_key)
                 except ImportError:
-                    # Fall back to local if openai package not installed
-                    return self._get_local_embedder()
+                    raise ImportError(
+                        "openai package required for embeddings. "
+                        "Install with: pip install 'vecna[embeddings]'"
+                    )
             return self._embed_client
 
-        # No OpenAI key, fall back to local embeddings
-        return self._get_local_embedder()
-
-    def _get_local_embedder(self):
-        """Get local sentence-transformers embedder."""
-        if self._local_model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-
-                self._local_model = SentenceTransformer("all-MiniLM-L6-v2")
-                self.embedding_dim = 384  # MiniLM dimension
-            except ImportError:
-                raise ImportError(
-                    "sentence-transformers required for local embeddings. "
-                    "Install with: pip install sentence-transformers"
-                )
-        return self._local_model
+        # No OpenAI key — cannot proceed
+        raise RuntimeError(
+            "OPENAI_API_KEY environment variable is required for embeddings. "
+            "Set it in your .env file or environment:\n"
+            "  export OPENAI_API_KEY=sk-..."
+        )
 
     def embed(self, texts: List[str]) -> np.ndarray:
         """Generate embeddings for texts."""

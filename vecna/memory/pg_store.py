@@ -96,6 +96,7 @@ class PgMemoryStore:
         embedding_model: str = "text-embedding-3-small",
         embedding_dim: int = 1536,
         redis_cache=None,
+        embedder=None,
     ):
         """
         Initialize the PostgreSQL memory store.
@@ -106,6 +107,8 @@ class PgMemoryStore:
             embedding_model: OpenAI embedding model to use.
             embedding_dim: Embedding dimension (must match model).
             redis_cache: Optional RedisHotCache instance for embedding caching.
+            embedder: Optional callable that takes List[str] and returns np.ndarray of embeddings.
+                If provided, bypasses OpenAI/sentence-transformers. Useful for testing.
         """
         self.connection_string = connection_string or os.environ.get("VECNA_PG_URL")
         if not self.connection_string:
@@ -117,11 +120,12 @@ class PgMemoryStore:
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
         self._redis_cache = redis_cache
+        self._custom_embedder = embedder
 
         # Lazy initialization
         self._conn = None
         self._embed_client = None
-        self._local_model = None  # For sentence-transformers fallback
+        self._local_model = None  # Reserved for future use
         self._psycopg2 = None
         self._embedding_cache: Dict[str, List[float]] = {}
 
@@ -159,13 +163,15 @@ class PgMemoryStore:
         Lazy initialization of embedding client.
 
         Embedding routing:
-        1. If OPENAI_API_KEY is set: Use OpenAI embeddings (1536 dim)
-        2. Fallback: Use sentence-transformers locally (384 dim)
-
-        IMPORTANT: OpenAI embeddings (1536 dim) are the default and preferred.
-        Local embeddings should only be used when OPENAI_API_KEY is not available.
+        1. If custom embedder provided: Use it directly (useful for testing)
+        2. If OPENAI_API_KEY is set: Use OpenAI embeddings (1536 dim)
+        3. Raise error: Inform user to set OPENAI_API_KEY
         """
         import os
+
+        # Use custom embedder if provided (useful for testing)
+        if self._custom_embedder is not None:
+            return self._custom_embedder
 
         # Try OpenAI if API key is available
         openai_key = os.getenv("OPENAI_API_KEY")
@@ -178,27 +184,19 @@ class PgMemoryStore:
                     # Ensure dimension is set for OpenAI
                     self.embedding_dim = 1536
                 except ImportError:
-                    # Fall back to local if openai package not installed
-                    return self._get_local_embedder()
+                    raise ImportError(
+                        "openai package required for embeddings. "
+                        "Install with: pip install 'vecna[embeddings]'"
+                    )
             return self._embed_client
 
-        # No OpenAI key, fall back to local embeddings
-        return self._get_local_embedder()
-
-    def _get_local_embedder(self):
-        """Get local sentence-transformers embedder."""
-        if self._local_model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-
-                self._local_model = SentenceTransformer("all-MiniLM-L6-v2")
-                self.embedding_dim = 384  # MiniLM dimension
-            except ImportError:
-                raise ImportError(
-                    "sentence-transformers required for local embeddings. "
-                    "Install with: pip install sentence-transformers"
-                )
-        return self._local_model
+        # No OpenAI key and no custom embedder — cannot proceed
+        raise RuntimeError(
+            "OPENAI_API_KEY environment variable is required for embeddings. "
+            "Set it in your .env file or environment:\n"
+            "  export OPENAI_API_KEY=sk-...\n"
+            "Alternatively, pass a custom embedder= callable to PgMemoryStore for testing."
+        )
 
     # ============================================================
     # EMBEDDING OPERATIONS
@@ -260,8 +258,32 @@ class PgMemoryStore:
 
         # Embed uncached texts
         if texts_to_embed:
-            # Check if it's a local model (SentenceTransformer) or OpenAI client
-            if hasattr(embedder, "encode"):
+            # Check if it's a custom callable embedder
+            if (
+                callable(embedder)
+                and not hasattr(embedder, "encode")
+                and not hasattr(embedder, "embeddings")
+            ):
+                # Custom embedder function: takes list of texts, returns np.ndarray
+                new_embeddings = embedder(texts_to_embed)
+                for j, embedding in enumerate(new_embeddings):
+                    original_idx = text_indices[j]
+                    embedding_list = (
+                        embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
+                    )
+                    results.append((original_idx, embedding_list))
+
+                    # Cache the embedding in memory
+                    cache_key = self._content_hash(texts_to_embed[j])
+                    self._embedding_cache[cache_key] = embedding_list
+
+                    # Cache in Redis if available
+                    if self._redis_cache:
+                        try:
+                            self._redis_cache.set_embedding(texts_to_embed[j], embedding_list)
+                        except Exception:
+                            pass
+            elif hasattr(embedder, "encode"):
                 # Local sentence-transformers
                 new_embeddings = embedder.encode(texts_to_embed, convert_to_numpy=True)
                 for j, embedding in enumerate(new_embeddings):

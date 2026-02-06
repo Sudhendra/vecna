@@ -58,15 +58,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: pip install -e ".[dev,postgres,local]"
-      - name: Debug alembic config
-        run: |
-          pwd
-          ls -la
-          echo "--- alembic.ini ---"
-          cat "$GITHUB_WORKSPACE/alembic.ini"
-          echo "--- alembic config (parsed) ---"
-          alembic -c "$GITHUB_WORKSPACE/alembic.ini" current || true
+        run: pip install -e ".[dev,postgres]"
       - name: Install database schema
         run: alembic -c "$GITHUB_WORKSPACE/alembic.ini" upgrade head
       - name: Run unit tests

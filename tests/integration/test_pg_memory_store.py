@@ -177,8 +177,7 @@ class TestEmbeddings:
         embeddings = pg_memory_store.embed(["This is a test sentence"])
 
         assert len(embeddings) == 1
-        # Should be 1536 (OpenAI) or 384 (local)
-        assert len(embeddings[0]) in [384, 1536]
+        assert len(embeddings[0]) == 1536
 
     def test_embed_multiple_texts(self, pg_memory_store: PgMemoryStore):
         """Test embedding multiple texts."""
@@ -191,7 +190,7 @@ class TestEmbeddings:
 
         assert len(embeddings) == 3
         for emb in embeddings:
-            assert len(emb) in [384, 1536]
+            assert len(emb) == 1536
 
     def test_embed_empty_list(self, pg_memory_store: PgMemoryStore):
         """Test that embedding an empty list returns empty array."""
@@ -233,7 +232,7 @@ class TestEmbeddings:
         retrieved = pg_memory_store.get_item(item_id)
 
         assert retrieved.embedding is not None
-        assert len(retrieved.embedding) in [384, 1536]
+        assert len(retrieved.embedding) == 1536
 
 
 # ============================================================
