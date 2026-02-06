@@ -350,7 +350,7 @@ class HiveLoop:
                                 logger.warning(f"Tool execution failed: {e}")
 
                         # === CODE EXECUTION SPAN ===
-                        elif self.config.auto_execute_code:
+                        if self.config.auto_execute_code:
                             try:
                                 if should_trace_pipeline():
                                     with trace_span("code.execute") as span:
@@ -668,7 +668,7 @@ class HiveLoop:
                     logger.warning(f"Tool execution failed: {e}")
 
             # Execute any Python code blocks in the response via RLM sandbox
-            elif response and self.config.auto_execute_code:
+            if response and self.config.auto_execute_code:
                 try:
                     response, _ = await execute_and_inject(response)
                 except Exception as e:
