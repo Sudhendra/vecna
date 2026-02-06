@@ -197,6 +197,18 @@ for warning in warnings:
 
 ---
 
+## Autonomy Controls
+
+Agentic autonomy is configurable by subsystem:
+
+- **Goal queue**: Controls max queued goals and promotion rules.
+- **Curiosity engine**: Toggles exploratory probes and novelty thresholds.
+- **Dream loop**: Enables background consolidation cadence.
+
+Defaults are conservative and require explicit opt-in for higher initiative.
+
+---
+
 ## Best Practices
 
 !!! tip "Configuration Tips"

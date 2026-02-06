@@ -17,7 +17,7 @@ from datetime import datetime
 import logging
 
 from vecna.core.hive_state import HiveState
-from vecna.core.types import IdentityEvent, IdentityTone, SelfModel
+from vecna.core.types import IdentityEvent, IdentityTone
 
 
 logger = logging.getLogger("vecna.self_reflection")
@@ -153,7 +153,6 @@ def generate_narrative(state: HiveState, coherence: float, tone: IdentityTone) -
     The narrative reflects Vecna's self-understanding at this moment.
     """
     total_facts = len(state.facts)
-    total_beliefs = len(state.beliefs)
 
     # Get domains
     domains = set()
@@ -365,7 +364,7 @@ def get_identity_context_for_prompt(state: HiveState) -> str:
             f"- Known domains: {', '.join(model.known_domains)}",
             f"- Contradictions seen: {model.contradictions_seen}",
             "",
-            f"## Narrative",
+            "## Narrative",
             model.narrative,
             "",
         ]

@@ -12,11 +12,10 @@ They test the full state management functionality including:
 
 import pytest
 import uuid
-from datetime import datetime
 
 from vecna.core.state_store import PgStateManager, PostgresStore
 from vecna.core.hive_state import HiveState
-from vecna.core.types import Fact, Belief, Hypothesis, Goal, OpenQuestion
+from vecna.core.types import Fact, Belief, Hypothesis
 
 
 # ============================================================
@@ -227,7 +226,7 @@ class TestPgStateManager:
         key = f"test-load-{uuid.uuid4()}"
 
         # Initially should be None
-        state = pg_state_manager.load_state(key)
+        _ = pg_state_manager.load_state(key)
         # May be None or return existing state
 
         # Save a new state
@@ -385,17 +384,25 @@ class TestMemorySynchronization:
 
     @pytest.fixture
     def manager_with_memory(self, postgres_available, redis_available):
-        """Get manager configured for memory sync."""
+        """Get manager configured for memory sync with mock embedder."""
         if not postgres_available:
             pytest.skip("PostgreSQL not available")
 
         import os
+        from tests.conftest import mock_embedder, MOCK_EMBEDDING_DIM
 
         manager = PgStateManager(
             pg_url=os.environ.get("VECNA_PG_URL"),
             redis_url=os.environ.get("VECNA_REDIS_URL") if redis_available else None,
             auto_sync_memory=False,  # We'll test manual sync
         )
+
+        # Inject mock embedder into the memory store so tests don't need OpenAI
+        store = manager._get_memory_store()
+        if store is not None:
+            store._custom_embedder = mock_embedder
+            store.embedding_dim = MOCK_EMBEDDING_DIM
+
         yield manager
 
     def test_get_memory_store(self, manager_with_memory: PgStateManager):

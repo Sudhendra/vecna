@@ -8,9 +8,8 @@ Each adapter wraps a model and provides:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
-import json
 import re
 import yaml
 
@@ -107,6 +106,11 @@ overall_confidence: 0.8
 </HIVE_UPDATE>
 
 If you have no updates, still include an empty <HIVE_UPDATE></HIVE_UPDATE> block.
+
+## TOOL CALLS
+If you need to use a tool, only call tools listed under AVAILABLE TOOLS.
+Use the exact format:
+<TOOL_CALL>{{"name":"tool_name","args":{{...}}}}</TOOL_CALL>
 """
 
 
@@ -182,7 +186,7 @@ class BaseAdapter(ABC):
                 except (ValueError, TypeError):
                     pass
 
-        except yaml.YAMLError as e:
+        except yaml.YAMLError:
             # If YAML parsing fails, return empty update but don't crash
             pass
 

@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# OpenAI is used ONLY for embeddings (optional, falls back to local)
+# OpenAI is required for embeddings (no local fallback)
 embeddings = ["openai>=1.0.0"]
 groq = ["groq>=0.4.0"]
 ollama = []  # aiohttp now in base dependencies

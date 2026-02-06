@@ -10,23 +10,16 @@ Tests:
 - Serialization/Deserialization
 """
 
-import pytest
-from datetime import datetime
-
 from vecna.core.hive_state import HiveState
 from vecna.core.types import (
     Fact,
     Belief,
     Hypothesis,
     Goal,
-    Plan,
     OpenQuestion,
     Contradiction,
     HiveUpdate,
-    IdentityKernel,
-    SelfModel,
     IdentityEvent,
-    IdentityTone,
 )
 
 
@@ -60,7 +53,6 @@ class TestHiveStateInitialization:
         state = clean_state
 
         # Modify identity
-        original_coherence = state.self_model.coherence
         state.self_model.coherence = 0.99
 
         # Call ensure_identity again

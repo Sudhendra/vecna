@@ -507,10 +507,13 @@ class TestHotMemoryManager:
             pytest.skip("PostgreSQL not available")
 
         import os
+        from tests.conftest import mock_embedder, MOCK_EMBEDDING_DIM
 
         manager = HotMemoryManager(
             redis_url=os.environ.get("VECNA_REDIS_URL"),
             pg_url=os.environ.get("VECNA_PG_URL"),
+            embedder=mock_embedder,
+            embedding_dim=MOCK_EMBEDDING_DIM,
         )
         yield manager
         manager.close()
@@ -545,7 +548,7 @@ class TestHotMemoryManager:
         # First call - should generate and cache
         emb1 = hot_memory_manager.get_embedding_cached(content)
         assert emb1 is not None
-        assert len(emb1) in [384, 1536]
+        assert len(emb1) == 1536
 
         # Second call - should use cache
         emb2 = hot_memory_manager.get_embedding_cached(content)

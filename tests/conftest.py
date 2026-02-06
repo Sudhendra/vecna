@@ -8,13 +8,16 @@ This module provides fixtures for:
 - Memory stores
 - Adapters
 - CLI test runners
+- Mock embedder for CI (no OpenAI key required)
 """
 
 import os
 import pytest
 import asyncio
-from typing import Generator, Optional
+import hashlib
 from datetime import datetime
+
+import numpy as np
 
 # Ensure environment variables are loaded
 from dotenv import load_dotenv
@@ -29,6 +32,61 @@ load_dotenv()
 # Database URLs from environment
 PG_URL = os.environ.get("VECNA_PG_URL", "postgresql://vecna:thehiveremembers@localhost:5432/vecna")
 REDIS_URL = os.environ.get("VECNA_REDIS_URL", "redis://localhost:6379/0")
+
+
+# ============================================================
+# MOCK EMBEDDER FOR CI
+# ============================================================
+
+# Embedding dimension must match what PgMemoryStore uses for OpenAI (1536).
+MOCK_EMBEDDING_DIM = 1536
+
+
+def _word_vector(word: str) -> np.ndarray:
+    """Get a deterministic unit vector for a single word."""
+    seed = int(hashlib.sha256(word.encode()).hexdigest(), 16) % (2**32)
+    rng = np.random.RandomState(seed)
+    vec = rng.randn(MOCK_EMBEDDING_DIM).astype(np.float32)
+    return vec / np.linalg.norm(vec)
+
+
+def mock_embedder(texts: list[str]) -> np.ndarray:
+    """
+    Deterministic mock embedder for testing.
+
+    Produces 1536-dim unit vectors with a word-overlap heuristic so that:
+    - Identical texts always produce identical embeddings
+    - Different texts produce different embeddings
+    - Texts sharing words get higher cosine similarity
+
+    Each word contributes a deterministic direction. The final vector is
+    the sum of word vectors plus a small text-unique component (for
+    differentiation), then normalized to unit length.
+
+    This is NOT a real semantic model, but produces enough similarity
+    structure for search/ranking tests to work correctly.
+    """
+    embeddings = []
+    for text in texts:
+        # Tokenize: lowercase, split on non-alpha, drop empties
+        words = [w for w in text.lower().split() if w.isalpha()]
+
+        # Sum word vectors (shared words → shared directions)
+        vec = np.zeros(MOCK_EMBEDDING_DIM, dtype=np.float32)
+        for word in words:
+            vec += _word_vector(word)
+
+        # Add a small text-unique component so identical-word-set texts differ
+        text_seed = int(hashlib.sha256(text.encode()).hexdigest(), 16) % (2**32)
+        rng = np.random.RandomState(text_seed)
+        vec += 0.1 * rng.randn(MOCK_EMBEDDING_DIM).astype(np.float32)
+
+        # Normalize to unit vector (cosine similarity works on unit vectors)
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
+        embeddings.append(vec)
+    return np.array(embeddings, dtype=np.float32)
 
 
 # ============================================================
@@ -85,14 +143,19 @@ def pg_memory_store(postgres_available):
     """
     Get a PgMemoryStore instance for testing.
 
-    Uses real PostgreSQL connection.
+    Uses real PostgreSQL connection with a mock embedder so tests
+    do not require an OpenAI API key.
     """
     if not postgres_available:
         pytest.skip("PostgreSQL not available")
 
     from vecna.memory.pg_store import PgMemoryStore
 
-    store = PgMemoryStore(connection_string=PG_URL)
+    store = PgMemoryStore(
+        connection_string=PG_URL,
+        embedder=mock_embedder,
+        embedding_dim=MOCK_EMBEDDING_DIM,
+    )
     yield store
     # Cleanup: close connection
     if hasattr(store, "_conn") and store._conn:

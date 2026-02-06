@@ -11,9 +11,9 @@ This module provides:
 The hot cache is the fastest tier in the memory substrate.
 """
 
-from typing import List, Dict, Optional, Any, Callable
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import hashlib
 import os
@@ -598,6 +598,8 @@ class HotMemoryManager:
         self,
         redis_url: Optional[str] = None,
         pg_url: Optional[str] = None,
+        embedder: Optional[Any] = None,
+        embedding_dim: Optional[int] = None,
     ):
         """
         Initialize the hot memory manager.
@@ -605,19 +607,28 @@ class HotMemoryManager:
         Args:
             redis_url: Redis connection URL (or VECNA_REDIS_URL env var).
             pg_url: PostgreSQL connection URL (or VECNA_PG_URL env var).
+            embedder: Optional custom embedder callable for PgMemoryStore.
+            embedding_dim: Optional embedding dimension (default 1536).
         """
         self.hot_cache = RedisHotCache(redis_url=redis_url)
 
         # Lazy init for PG store
         self._pg_store = None
         self._pg_url = pg_url
+        self._embedder = embedder
+        self._embedding_dim = embedding_dim
 
     def _get_pg_store(self):
         """Lazy initialization of PG memory store."""
         if self._pg_store is None:
             from vecna.memory.pg_store import PgMemoryStore
 
-            self._pg_store = PgMemoryStore(connection_string=self._pg_url)
+            kwargs = {"connection_string": self._pg_url}
+            if self._embedder is not None:
+                kwargs["embedder"] = self._embedder
+            if self._embedding_dim is not None:
+                kwargs["embedding_dim"] = self._embedding_dim
+            self._pg_store = PgMemoryStore(**kwargs)
         return self._pg_store
 
     def push_event(

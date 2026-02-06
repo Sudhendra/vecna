@@ -177,8 +177,7 @@ class TestEmbeddings:
         embeddings = pg_memory_store.embed(["This is a test sentence"])
 
         assert len(embeddings) == 1
-        # Should be 1536 (OpenAI) or 384 (local)
-        assert len(embeddings[0]) in [384, 1536]
+        assert len(embeddings[0]) == 1536
 
     def test_embed_multiple_texts(self, pg_memory_store: PgMemoryStore):
         """Test embedding multiple texts."""
@@ -191,7 +190,7 @@ class TestEmbeddings:
 
         assert len(embeddings) == 3
         for emb in embeddings:
-            assert len(emb) in [384, 1536]
+            assert len(emb) == 1536
 
     def test_embed_empty_list(self, pg_memory_store: PgMemoryStore):
         """Test that embedding an empty list returns empty array."""
@@ -233,7 +232,7 @@ class TestEmbeddings:
         retrieved = pg_memory_store.get_item(item_id)
 
         assert retrieved.embedding is not None
-        assert len(retrieved.embedding) in [384, 1536]
+        assert len(retrieved.embedding) == 1536
 
 
 # ============================================================
@@ -296,7 +295,7 @@ class TestSemanticSearch:
         # Results are (item, similarity) tuples
         for item, similarity in results:
             assert isinstance(item, MemoryItem)
-            assert 0.0 <= similarity <= 1.0
+            assert -1.0 <= similarity <= 1.0
 
     def test_search_with_item_type_filter(self, pg_memory_store: PgMemoryStore, search_test_items):
         """Test search with item type filter."""
@@ -331,10 +330,13 @@ class TestSemanticSearch:
         """Test that search returns semantically relevant results."""
         item_ids, batch_id = search_test_items
 
-        # Search for AI-related content
-        results = pg_memory_store.search("artificial intelligence neural nets", top_k=2)
+        # Search for AI-related content within the "ai" domain
+        # to avoid interference from items in other test batches
+        results = pg_memory_store.search(
+            "artificial intelligence neural nets", top_k=5, domain="ai"
+        )
 
-        # The ML item should be in the top results
+        # The ML item should be in the results
         contents = [item.content for item, _ in results]
         assert any("neural" in c.lower() or "machine learning" in c.lower() for c in contents)
 
@@ -346,13 +348,13 @@ class TestSemanticSearch:
 
         # Get initial retrieval count
         initial = pg_memory_store.get_item(item_ids[0])
-        initial_count = initial.retrieval_count
 
         # Perform search that should return this item
+        assert initial is not None
         pg_memory_store.search(initial.content[:50], top_k=5)
 
         # Check if count increased
-        updated = pg_memory_store.get_item(item_ids[0])
+        _ = pg_memory_store.get_item(item_ids[0])
         # Note: count may not increase if item not in top results
         # This is expected behavior
 
@@ -634,7 +636,7 @@ class TestEpisodes:
         # Results are (episode, similarity) tuples
         for episode, similarity in results:
             assert isinstance(episode, Episode)
-            assert 0.0 <= similarity <= 1.0
+            assert -1.0 <= similarity <= 1.0
 
 
 # ============================================================

@@ -11,8 +11,12 @@ PostgreSQL + Redis is the ONLY supported storage backend.
 All state persistence flows through PostgreSQL with Redis caching.
 """
 
+from __future__ import annotations
+
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from pathlib import Path
 from datetime import datetime
 import json
@@ -20,6 +24,9 @@ import logging
 import os
 
 from vecna.core.hive_state import HiveState
+
+if TYPE_CHECKING:
+    from vecna.core.types import IdentityEvent
 
 logger = logging.getLogger("vecna.state_store")
 
@@ -182,7 +189,8 @@ class PostgresStore(StateStore):
                 """,
                     (table_name,),
                 )
-                return cur.fetchone()[0]
+                row = cur.fetchone()
+                return row[0] if row else False
         except Exception:
             return False
 
@@ -193,7 +201,7 @@ class PostgresStore(StateStore):
         Checks if tables exist and runs migrations if needed.
         This provides auto-migration on startup.
         """
-        conn = self._get_connection()
+        self._get_connection()
 
         # Check if hive_state table exists
         if self._table_exists("hive_state"):
@@ -228,14 +236,14 @@ class PostgresStore(StateStore):
                     # Create minimal alembic config programmatically
                     alembic_cfg = Config()
                     alembic_cfg.set_main_option("script_location", migrations_dir)
-                    alembic_cfg.set_main_option("sqlalchemy.url", self.connection_string)
+                    alembic_cfg.set_main_option("sqlalchemy.url", self.connection_string or "")
                     command.upgrade(alembic_cfg, "head")
                     logger.info("Alembic migrations completed successfully")
                     return
                 raise FileNotFoundError("alembic.ini not found")
 
             alembic_cfg = Config(alembic_ini)
-            alembic_cfg.set_main_option("sqlalchemy.url", self.connection_string)
+            alembic_cfg.set_main_option("sqlalchemy.url", self.connection_string or "")
             command.upgrade(alembic_cfg, "head")
             logger.info("Alembic migrations completed successfully")
 
@@ -1219,7 +1227,7 @@ class PgStateManager:
     # IDENTITY OPERATIONS
     # ============================================================
 
-    def persist_identity_event(self, event: "IdentityEvent") -> bool:
+    def persist_identity_event(self, event: IdentityEvent) -> bool:
         """
         Persist an identity event to the identity_timeline table.
 
@@ -1235,9 +1243,8 @@ class PgStateManager:
             logger.warning("PostgreSQL unavailable, cannot persist identity event")
             return False
 
+        store = None
         try:
-            from vecna.core.types import IdentityEvent
-
             store = self._get_pg_store()
             conn = store._get_connection()
 
@@ -1267,7 +1274,8 @@ class PgStateManager:
                     ),
                 )
 
-                event_id = cur.fetchone()[0]
+                row = cur.fetchone()
+                event_id = row[0] if row else None
 
             conn.commit()
             logger.debug(f"Persisted identity event: id={event_id}, trigger={event.trigger}")
@@ -1275,15 +1283,16 @@ class PgStateManager:
 
         except Exception as e:
             logger.error(f"Failed to persist identity event: {e}")
-            try:
-                store._get_connection().rollback()
-            except Exception:
-                pass
+            if store is not None:
+                try:
+                    store._get_connection().rollback()
+                except Exception:
+                    pass
             return False
 
     def get_identity_timeline(
         self, limit: int = 100, since: Optional[datetime] = None
-    ) -> List["IdentityEvent"]:
+    ) -> List[IdentityEvent]:
         """
         Retrieve identity events from the identity_timeline table.
 

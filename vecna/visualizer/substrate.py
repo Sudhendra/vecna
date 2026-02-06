@@ -15,10 +15,10 @@ Optimized for 80x24 terminal.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 import math
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
@@ -27,7 +27,7 @@ from rich.live import Live
 from rich.box import MINIMAL, ROUNDED
 
 from vecna.core.hive_state import HiveState
-from vecna.visuals.theme import STYLES, VECNA_STYLES, VECNA_COLORS
+from vecna.visuals.theme import VECNA_STYLES
 
 
 # ============================================================
@@ -125,11 +125,11 @@ class SubstrateVisualizer:
         text.append("VECNA", style=VECNA_STYLES["banner"])
         text.append("  │  ", style=VECNA_STYLES["dim"])
         text.append("SUBSTRATE", style=VECNA_STYLES["header"])
-        text.append(f"  │  Coherence: ", style=VECNA_STYLES["dim"])
+        text.append("  │  Coherence: ", style=VECNA_STYLES["dim"])
         text.append(f"{coherence:.2f}", style=VECNA_STYLES["highlight"])
-        text.append(f"  │  Nodes: ", style=VECNA_STYLES["dim"])
+        text.append("  │  Nodes: ", style=VECNA_STYLES["dim"])
         text.append(f"{node_count}", style=VECNA_STYLES["text"])
-        text.append(f"  │  ", style=VECNA_STYLES["dim"])
+        text.append("  │  ", style=VECNA_STYLES["dim"])
         text.append(
             pulse_char, style=VECNA_STYLES["warning"] if self._tick % 4 < 2 else VECNA_STYLES["dim"]
         )

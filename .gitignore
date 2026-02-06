@@ -1,6 +1,5 @@
 .venv
 docker-compose.memory.yml
-alembic.ini
 additional_docs
 __pycache__
 
@@ -27,3 +26,4 @@ build/
 .DS_Store
 .vscode/
 .idea/
+.worktrees/

@@ -4,9 +4,8 @@ Vecna TUI - Interactive Terminal UI for model and persona selection.
 Uses rich library for interactive selection menus.
 """
 
-from typing import List, Optional, Callable
+from typing import List, Optional
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt
 
@@ -54,11 +53,11 @@ def select_from_list(
         table.add_row(f"[{i}]", f"{name}{marker}", desc)
 
     console.print(table)
-    console.print(f"\n[dim]Enter number to select, or 'q' to cancel[/dim]")
+    console.print("\n[dim]Enter number to select, or 'q' to cancel[/dim]")
 
     # Get selection
     try:
-        choice = Prompt.ask(f"[red]Select[/red]", default="q")
+        choice = Prompt.ask("[red]Select[/red]", default="q")
 
         if choice.lower() == "q":
             return None
@@ -161,12 +160,12 @@ def select_models(console: Console) -> Optional[List[str]]:
 
     console.print(table)
     console.print(
-        f"\n[dim]Enter numbers separated by commas (e.g., '1,3,4'), or 'q' to cancel[/dim]"
+        "\n[dim]Enter numbers separated by commas (e.g., '1,3,4'), or 'q' to cancel[/dim]"
     )
 
     # Get selection
     try:
-        choice = Prompt.ask(f"[red]Select[/red]", default="q")
+        choice = Prompt.ask("[red]Select[/red]", default="q")
 
         if choice.lower() == "q":
             return None
@@ -279,6 +278,6 @@ def quick_setup_wizard(console: Console) -> bool:
     console.print(f"[red]Max Parallel:[/red] {config.max_parallel_models}")
     console.print(f"[red]Available Models:[/red] {len(available)}")
 
-    console.print(f"\n[dim]Run 'vecna' to start chatting![/dim]\n")
+    console.print("\n[dim]Run 'vecna' to start chatting![/dim]\n")
 
     return True
