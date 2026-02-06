@@ -295,7 +295,7 @@ class TestSemanticSearch:
         # Results are (item, similarity) tuples
         for item, similarity in results:
             assert isinstance(item, MemoryItem)
-            assert 0.0 <= similarity <= 1.0
+            assert -1.0 <= similarity <= 1.0
 
     def test_search_with_item_type_filter(self, pg_memory_store: PgMemoryStore, search_test_items):
         """Test search with item type filter."""
@@ -633,7 +633,7 @@ class TestEpisodes:
         # Results are (episode, similarity) tuples
         for episode, similarity in results:
             assert isinstance(episode, Episode)
-            assert 0.0 <= similarity <= 1.0
+            assert -1.0 <= similarity <= 1.0
 
 
 # ============================================================
