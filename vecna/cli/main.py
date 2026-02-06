@@ -10,7 +10,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 import click
 from dotenv import load_dotenv
@@ -182,12 +182,21 @@ def get_hive(use_config: bool = True):
             vecna_config = ensure_default_config()
 
             # Create HiveConfig from vecna config
+            auto_execute_tools = cast(
+                bool,
+                vecna_config.auto_execute_tools
+                if vecna_config.auto_execute_tools is not None
+                else vecna_config.auto_execute_code,
+            )
+
             hive_config = HiveConfig(
                 use_routing=vecna_config.use_routing,
                 max_parallel_models=vecna_config.max_parallel_models,
                 verbose=False,  # We handle output ourselves
                 use_local_embeddings=False,
                 auto_execute_code=vecna_config.auto_execute_code,
+                auto_execute_tools=auto_execute_tools,
+                tool_policy=vecna_config.tool_policy.to_policy(),
                 use_pg_memory=True,  # Use PgStateManager
                 persist_identity_events=True,  # Persist identity events to PG
             )
@@ -221,7 +230,7 @@ def get_hive(use_config: bool = True):
 
     # Fallback: Legacy environment-based model loading
     hive_config = HiveConfig(
-        use_routing=False,
+        use_routing=True,
         max_parallel_models=5,
         verbose=False,
         use_local_embeddings=False,

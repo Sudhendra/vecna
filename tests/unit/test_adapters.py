@@ -103,6 +103,9 @@ class TestBaseAdapterPromptBuilding:
         # Should include some facts from state
         assert len(prompt) > 500  # Should be substantial
 
+    def test_prompt_includes_tool_instructions(self):
+        assert "TOOL_CALL" in HIVE_IDENTITY_PROMPT
+
 
 class TestHiveUpdateParsing:
     """Tests for parsing HIVE_UPDATE from model output."""

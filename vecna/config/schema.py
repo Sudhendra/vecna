@@ -5,9 +5,11 @@ Defines the structure for personas, models, groups, memory, and runtime settings
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
 from enum import Enum
 import logging
+from typing import Any, Dict, List, Optional
+
+from vecna.tools.permissions import RiskTier, ToolPolicy
 
 
 logger = logging.getLogger("vecna.config")
@@ -33,13 +35,6 @@ class AgentMode(str, Enum):
 
     assistant = "assistant"
     explorer = "explorer"
-
-
-@dataclass
-class ToolPolicyConfig:
-    deny: List[str] = field(default_factory=list)
-    ask: List[str] = field(default_factory=list)
-    allow: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -280,6 +275,54 @@ class GroupConfig:
 
 
 @dataclass
+class ToolPolicyConfig:
+    default_action: str = "deny"
+    allowlist: List[str] = field(default_factory=list)
+    denylist: List[str] = field(default_factory=list)
+    risk_actions: Dict[str, str] = field(
+        default_factory=lambda: {
+            "low": "allow",
+            "medium": "ask",
+            "high": "deny",
+            "critical": "deny",
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "default_action": self.default_action,
+            "allowlist": list(self.allowlist),
+            "denylist": list(self.denylist),
+            "risk_actions": dict(self.risk_actions),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ToolPolicyConfig":
+        return cls(
+            default_action=data.get("default_action", "deny"),
+            allowlist=data.get("allowlist", []) or [],
+            denylist=data.get("denylist", []) or [],
+            risk_actions=data.get(
+                "risk_actions",
+                {
+                    "low": "allow",
+                    "medium": "ask",
+                    "high": "deny",
+                    "critical": "deny",
+                },
+            ),
+        )
+
+    def to_policy(self) -> ToolPolicy:
+        return ToolPolicy(
+            default_action=self.default_action,
+            allowlist=list(self.allowlist),
+            denylist=list(self.denylist),
+            risk_actions={RiskTier(key): value for key, value in (self.risk_actions or {}).items()},
+        )
+
+
+@dataclass
 class VecnaConfig:
     """
     Root configuration object for Vecna.
@@ -305,8 +348,10 @@ class VecnaConfig:
 
     # Hive settings
     max_parallel_models: int = 5
-    use_routing: bool = False  # Route by domain or use all models
+    use_routing: bool = True  # Route by domain or use all models
     auto_execute_code: bool = True  # Execute Python code blocks in responses
+    auto_execute_tools: bool = True
+    tool_policy: ToolPolicyConfig = field(default_factory=ToolPolicyConfig)
 
     # Agent autonomy settings
     agent_mode: AgentMode = AgentMode.assistant
@@ -373,6 +418,8 @@ class VecnaConfig:
             "use_routing": self.use_routing,
             "auto_execute_code": self.auto_execute_code,
             "agent_mode": agent_mode.value,
+            "auto_execute_tools": self.auto_execute_tools,
+            "tool_policy": self.tool_policy.to_dict(),
         }
 
     @classmethod
@@ -407,6 +454,16 @@ class VecnaConfig:
                     agent_mode,
                 )
                 agent_mode = AgentMode.assistant
+        tool_policy_data = data.get("tool_policy")
+        tool_policy = (
+            ToolPolicyConfig.from_dict(tool_policy_data)
+            if isinstance(tool_policy_data, dict)
+            else ToolPolicyConfig()
+        )
+
+        auto_execute_tools = data.get("auto_execute_tools")
+        if auto_execute_tools is None:
+            auto_execute_tools = data.get("auto_execute_code", True)
 
         return cls(
             personas=personas,
@@ -416,9 +473,11 @@ class VecnaConfig:
             active_group=data.get("active_group", "default"),
             active_persona=data.get("active_persona", "concise"),
             max_parallel_models=data.get("max_parallel_models", 5),
-            use_routing=data.get("use_routing", False),
+            use_routing=data.get("use_routing", True),
             auto_execute_code=data.get("auto_execute_code", True),
             agent_mode=agent_mode,
+            auto_execute_tools=auto_execute_tools,
+            tool_policy=tool_policy,
             config_version=data.get("config_version", 1),
         )
 

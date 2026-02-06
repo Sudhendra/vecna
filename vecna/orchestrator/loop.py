@@ -27,6 +27,10 @@ from vecna.memory.flush import estimate_token_count, should_flush
 from vecna.orchestrator.consensus import ConsensusEngine, ConsensusConfig, DomainRouter
 from vecna.orchestrator.self_reflection import reflect, get_identity_context_for_prompt
 from vecna.tools.code_executor import execute_and_inject
+from vecna.tools.registry import get_default_registry
+from vecna.tools.permissions import ToolPermissionManager, ToolPolicy
+from vecna.tools.runtime import ToolRuntime, RuntimeConfig
+from vecna.tools.types import ToolExecutionContext
 
 
 logging.basicConfig(level=logging.INFO)
@@ -86,6 +90,12 @@ class HiveConfig:
 
     # Auto-execute Python code blocks in responses via RLM sandbox
     auto_execute_code: bool = True
+
+    # Auto-execute tool calls in responses
+    auto_execute_tools: bool = True
+
+    # Tool permission policy
+    tool_policy: ToolPolicy = field(default_factory=ToolPolicy)
 
     # Use PgStateManager for memory instead of in-memory MemoryStore
     use_pg_memory: bool = True
@@ -149,6 +159,17 @@ class HiveLoop:
 
         self.compressor = MemoryCompressor()
 
+        # Tool runtime
+        auto_execute_tools = self.config.auto_execute_tools
+        tool_policy = self.config.tool_policy
+        self.tool_registry = get_default_registry()
+        self.tool_permissions = ToolPermissionManager(tool_policy)
+        self.tool_runtime = ToolRuntime(
+            registry=self.tool_registry,
+            permission_manager=self.tool_permissions,
+            config=RuntimeConfig(auto_execute_tools=auto_execute_tools),
+        )
+
         # Tracking
         self.cycle_count = 0
         self.history: List[Dict] = []
@@ -187,20 +208,23 @@ class HiveLoop:
         )
 
         max_cycles = max_cycles or self.config.max_cycles
+        auto_execute_tools = self.config.auto_execute_tools
 
         if not self.adapters:
             raise ValueError("No models added to hive. Use add_adapter() or add_model() first.")
 
         # === LANGFUSE TRACE (using context manager) ===
+        session_id = str(uuid.uuid4())
         with trace_request(
             name="hive.think",
-            session_id=str(uuid.uuid4()),
+            session_id=session_id,
             input=task,
             metadata={
                 "active_models": [a.name for a in self.adapters],
                 "max_cycles": max_cycles,
                 "use_routing": self.config.use_routing,
                 "auto_execute_code": self.config.auto_execute_code,
+                "auto_execute_tools": auto_execute_tools,
             },
             tags=["vecna", "hive-think"],
         ) as trace_ctx:
@@ -288,8 +312,45 @@ class HiveLoop:
                     if responses:
                         final_response = max(responses, key=len)
 
+                        # === TOOL EXECUTION SPAN ===
+                        if auto_execute_tools and self.tool_runtime:
+                            try:
+                                if should_trace_pipeline():
+                                    with trace_span("tool.execute") as span:
+                                        (
+                                            final_response,
+                                            tool_results,
+                                        ) = await self.tool_runtime.execute_calls(
+                                            final_response,
+                                            ToolExecutionContext(session_id=session_id),
+                                        )
+                                        span.set_metadata(
+                                            {
+                                                "tools_executed": len(tool_results)
+                                                if tool_results
+                                                else 0,
+                                                "success": True,
+                                            }
+                                        )
+                                        if tool_results and self.config.verbose:
+                                            logger.info(
+                                                f"Executed {len(tool_results)} tool call(s)"
+                                            )
+                                else:
+                                    (
+                                        final_response,
+                                        tool_results,
+                                    ) = await self.tool_runtime.execute_calls(
+                                        final_response,
+                                        ToolExecutionContext(session_id=session_id),
+                                    )
+                                    if tool_results and self.config.verbose:
+                                        logger.info(f"Executed {len(tool_results)} tool call(s)")
+                            except Exception as e:
+                                logger.warning(f"Tool execution failed: {e}")
+
                         # === CODE EXECUTION SPAN ===
-                        if self.config.auto_execute_code:
+                        elif self.config.auto_execute_code:
                             try:
                                 if should_trace_pipeline():
                                     with trace_span("code.execute") as span:
@@ -485,6 +546,12 @@ class HiveLoop:
             augmented_summary = f"{identity_context}\n\n{augmented_summary}"
         if memory_context:
             augmented_summary = f"{augmented_summary}\n\nRELEVANT MEMORIES:\n{memory_context}"
+        if self.tool_registry:
+            tool_names = [t.name for t in self.tool_registry.list_tools()]
+            if tool_names:
+                augmented_summary = (
+                    f"{augmented_summary}\n\nAVAILABLE TOOLS: {', '.join(tool_names)}"
+                )
 
         self.state.memory_summary = augmented_summary
 
@@ -591,8 +658,17 @@ class HiveLoop:
 
             response = max(responses, key=len) if responses else ""
 
+            # Execute any tool calls in the response
+            if response and self.config.auto_execute_tools and self.tool_runtime:
+                try:
+                    response, _ = await self.tool_runtime.execute_calls(
+                        response, ToolExecutionContext()
+                    )
+                except Exception as e:
+                    logger.warning(f"Tool execution failed: {e}")
+
             # Execute any Python code blocks in the response via RLM sandbox
-            if response and self.config.auto_execute_code:
+            elif response and self.config.auto_execute_code:
                 try:
                     response, _ = await execute_and_inject(response)
                 except Exception as e:

@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from vecna.tools.types import ToolExecutionContext, ToolResult
+
 logger = logging.getLogger("vecna.code_executor")
 
 # Execution log stored in ~/.vecna/
@@ -587,6 +589,22 @@ async def execute_and_inject(
         modified = modified[: block.start_pos] + replacement + modified[block.end_pos :]
 
     return modified, list(reversed(results))  # Reverse back to original order
+
+
+async def execute_code_tool(args: dict, context: ToolExecutionContext) -> ToolResult:
+    code = args.get("code", "")
+    result = await execute_code_block(code)
+    return ToolResult(
+        tool_name="python_exec",
+        success=result.success,
+        output=result.stdout,
+        error=result.stderr,
+        metadata={
+            "return_code": result.return_code,
+            "execution_time_ms": result.execution_time_ms,
+            "packages_installed": result.packages_installed,
+        },
+    )
 
 
 def get_execution_log(limit: int = 20) -> List[dict]:
