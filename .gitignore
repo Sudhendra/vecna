@@ -1,6 +1,5 @@
 .venv
 docker-compose.memory.yml
-alembic.ini
 additional_docs
 __pycache__
 
