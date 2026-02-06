@@ -1,52 +1,56 @@
-import logging
-import os
-
-import pytest
+import json
 
 from click.testing import CliRunner
 
 from vecna.cli.main import cli
-from vecna.tools.approvals import ApprovalRequest, ApprovalStore
+from vecna.tools.approvals import ApprovalStore
 
 
-def test_tools_pending_empty():
+def test_tools_pending_empty(tmp_path, monkeypatch):
+    approvals_path = tmp_path / "approvals.jsonl"
+    monkeypatch.setenv("VECNA_APPROVALS_PATH", str(approvals_path))
+
     runner = CliRunner()
     result = runner.invoke(cli, ["tools", "pending"])
+
     assert result.exit_code == 0
+    assert result.output.strip() == ""
 
 
 def test_tools_pending_shows_saved_requests(tmp_path, monkeypatch):
-    approvals_path = tmp_path / "approvals.json"
+    approvals_path = tmp_path / "approvals.jsonl"
     monkeypatch.setenv("VECNA_APPROVALS_PATH", str(approvals_path))
 
     store = ApprovalStore()
-    store.add_request(ApprovalRequest(request_id="req-1", tool_name="search", status="pending"))
+    request = store.request_approval("search", {"query": "a"})
 
     runner = CliRunner()
     result = runner.invoke(cli, ["tools", "pending"])
 
     assert result.exit_code == 0
-    assert "req-1 search pending" in result.output
+    assert f"{request.request_id} {request.tool_name} pending" in result.output
 
 
 def test_tools_approve_updates_status(tmp_path, monkeypatch):
-    approvals_path = tmp_path / "approvals.json"
+    approvals_path = tmp_path / "approvals.jsonl"
     monkeypatch.setenv("VECNA_APPROVALS_PATH", str(approvals_path))
 
     store = ApprovalStore()
-    store.add_request(ApprovalRequest(request_id="req-2", tool_name="exec", status="pending"))
+    request = store.request_approval("exec", {"code": "print('hi')"})
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["tools", "approve", "req-2"])
+    result = runner.invoke(cli, ["tools", "approve", request.request_id])
 
     assert result.exit_code == 0
-    updated = ApprovalStore().get_request("req-2")
-    assert updated is not None
-    assert updated.status == "approved"
+
+    entries = approvals_path.read_text(encoding="utf-8").splitlines()
+    payloads = [json.loads(line) for line in entries if line.strip()]
+    updated = next(item for item in payloads if item["request_id"] == request.request_id)
+    assert updated["status"] == "approved"
 
 
 def test_tools_approve_missing_request_fails(tmp_path, monkeypatch):
-    approvals_path = tmp_path / "approvals.json"
+    approvals_path = tmp_path / "approvals.jsonl"
     monkeypatch.setenv("VECNA_APPROVALS_PATH", str(approvals_path))
 
     runner = CliRunner()
@@ -56,65 +60,19 @@ def test_tools_approve_missing_request_fails(tmp_path, monkeypatch):
     assert "not found" in result.output.lower()
 
 
-def test_store_warns_on_invalid_json(tmp_path, caplog):
-    approvals_path = tmp_path / "approvals.json"
-    approvals_path.write_text("{not: valid}", encoding="utf-8")
+def test_tools_deny_updates_status(tmp_path, monkeypatch):
+    approvals_path = tmp_path / "approvals.jsonl"
+    monkeypatch.setenv("VECNA_APPROVALS_PATH", str(approvals_path))
 
-    with caplog.at_level(logging.WARNING, logger="vecna.approvals"):
-        store = ApprovalStore(path=approvals_path)
+    store = ApprovalStore()
+    request = store.request_approval("exec", {"code": "print('hi')"})
 
-    assert store.get_pending() == []
-    assert any(approvals_path.as_posix() in record.message for record in caplog.records)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["tools", "deny", request.request_id])
 
+    assert result.exit_code == 0
 
-def test_store_uses_atomic_replace_on_save(tmp_path, monkeypatch):
-    approvals_path = tmp_path / "approvals.json"
-    calls = {"count": 0}
-    original_replace = os.replace
-
-    def fake_replace(src, dst):
-        calls["count"] += 1
-        original_replace(src, dst)
-
-    monkeypatch.setattr("vecna.tools.approvals.os.replace", fake_replace)
-
-    store = ApprovalStore(path=approvals_path)
-    store.add_request(ApprovalRequest(request_id="req-3", tool_name="search", status="pending"))
-
-    assert calls["count"] >= 1
-
-
-def test_store_fsyncs_on_save(tmp_path, monkeypatch):
-    approvals_path = tmp_path / "approvals.json"
-    calls = {"count": 0}
-
-    def fake_fsync(_fd):
-        calls["count"] += 1
-
-    monkeypatch.setattr("vecna.tools.approvals.os.fsync", fake_fsync)
-
-    store = ApprovalStore(path=approvals_path)
-    store.add_request(ApprovalRequest(request_id="req-4", tool_name="search", status="pending"))
-
-    assert calls["count"] >= 1
-
-
-def test_store_fsyncs_dir_with_cloexec_flag_when_available(tmp_path, monkeypatch):
-    if not hasattr(os, "O_CLOEXEC"):
-        pytest.skip("os.O_CLOEXEC not available")
-
-    approvals_path = tmp_path / "approvals.json"
-    calls = []
-    original_open = os.open
-
-    def fake_open(path, flags, *args, **kwargs):
-        calls.append(flags)
-        return original_open(path, flags, *args, **kwargs)
-
-    monkeypatch.setattr("vecna.tools.approvals.os.open", fake_open)
-
-    store = ApprovalStore(path=approvals_path)
-    store.add_request(ApprovalRequest(request_id="req-5", tool_name="search", status="pending"))
-
-    assert calls
-    assert any(flags & os.O_CLOEXEC for flags in calls)
+    entries = approvals_path.read_text(encoding="utf-8").splitlines()
+    payloads = [json.loads(line) for line in entries if line.strip()]
+    updated = next(item for item in payloads if item["request_id"] == request.request_id)
+    assert updated["status"] == "denied"

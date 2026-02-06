@@ -1,4 +1,4 @@
-from vecna.tools.types import ToolCall, ToolExecutionContext, ToolResult, ToolSpec
+from vecna.tools.types import ToolCall, ToolSpec
 
 
 def test_tool_spec_defaults():

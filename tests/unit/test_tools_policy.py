@@ -1,91 +1,38 @@
-from vecna.tools.runtime import ToolRuntime
-from vecna.tools.registry import ToolRegistry
-from vecna.tools.audit import ToolAudit
-from vecna.tools.router import ToolRouter
-from vecna.config.schema import ToolPolicyConfig
+from vecna.tools.permissions import PolicyDecision, RiskTier, ToolPermissionManager, ToolPolicy
 
 
-def test_tool_policy_denies():
-    registry = ToolRegistry()
-    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig(deny=["execute_code"]))
-    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
-    assert "denied" in result.lower()
+def test_tool_permission_manager_allowlist_overrides_denylist():
+    policy = ToolPolicy(allowlist=["safe"], denylist=["safe"])
+    manager = ToolPermissionManager(policy)
+
+    decision = manager.decide("safe", RiskTier.HIGH)
+
+    assert decision == PolicyDecision("allow", "allowlist")
 
 
-def test_tool_policy_malformed_call_returns_error_string():
-    registry = ToolRegistry()
-    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
-    result = runtime.execute("TOOL_CALL:")
-    assert "invalid" in result.lower()
+def test_tool_permission_manager_denies_by_default_action():
+    policy = ToolPolicy(default_action="deny", risk_actions={})
+    manager = ToolPermissionManager(policy)
+
+    decision = manager.decide("unknown", RiskTier.LOW)
+
+    assert decision.action == "deny"
+    assert decision.reason == "risk:low"
 
 
-def test_tool_policy_ask_requires_approval():
-    registry = ToolRegistry()
-    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig(ask=["execute_code"]))
-    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
-    assert "approval" in result.lower()
+def test_tool_permission_manager_uses_risk_actions():
+    policy = ToolPolicy(risk_actions={RiskTier.MEDIUM: "ask"})
+    manager = ToolPermissionManager(policy)
+
+    decision = manager.decide("python_exec", RiskTier.MEDIUM)
+
+    assert decision == PolicyDecision("ask", "risk:medium")
 
 
-def test_tool_policy_allows_tool_execution_not_implemented():
-    registry = ToolRegistry()
-    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
-    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
-    assert "not found" in result.lower()
-    assert "denied" not in result.lower()
+def test_tool_permission_manager_denies_explicit_denylist():
+    policy = ToolPolicy(denylist=["python_exec"])
+    manager = ToolPermissionManager(policy)
 
+    decision = manager.decide("python_exec", RiskTier.LOW)
 
-def test_tool_policy_allowlist_rejects_unknown_tool():
-    registry = ToolRegistry()
-    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig(allow=["safe_tool"]))
-    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
-    assert "denied" in result.lower()
-
-
-def test_tool_policy_requires_tool_call_prefix():
-    registry = ToolRegistry()
-    runtime = ToolRuntime(registry, tool_policy=ToolPolicyConfig())
-    result = runtime.execute('execute_code {"code": "print(1)"}')
-    assert "invalid" in result.lower()
-
-
-def test_tool_policy_denied_call_records_audit_attempt():
-    router = ToolRouter()
-    audit = ToolAudit(router)
-    registry = ToolRegistry()
-    runtime = ToolRuntime(
-        registry,
-        tool_policy=ToolPolicyConfig(deny=["execute_code"]),
-        audit=audit,
-    )
-    result = runtime.execute('TOOL_CALL: execute_code {"code": "print(1)"}')
-    assert "denied" in result.lower()
-    assert router._stats["execute_code"]["total"] == 1
-    assert router._stats["execute_code"]["success"] == 0
-
-
-def test_tool_execution_records_success():
-    registry = ToolRegistry(register_defaults=False)
-
-    def echo(value: str) -> str:
-        return f"echo:{value}"
-
-    registry.register("echo", echo, "Echo the provided value.")
-    router = ToolRouter()
-    audit = ToolAudit(router)
-    runtime = ToolRuntime(registry, audit=audit)
-    result = runtime.execute('TOOL_CALL: echo {"value": "hi"}')
-    assert result == "echo:hi"
-    assert router._stats["echo"]["total"] == 1
-    assert router._stats["echo"]["success"] == 1
-
-
-def test_tool_execution_accepts_raw_args_string():
-    registry = ToolRegistry(register_defaults=False)
-
-    def echo(input: str) -> str:
-        return f"ok:{input}"
-
-    registry.register("echo", echo, "Echo the provided value.")
-    runtime = ToolRuntime(registry)
-    result = runtime.execute("TOOL_CALL: echo hello")
-    assert result == "ok:hello"
+    assert decision == PolicyDecision("deny", "denylist")

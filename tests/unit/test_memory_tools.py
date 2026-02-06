@@ -1,5 +1,5 @@
 from vecna.tools.memory_tools import memory_search
-from vecna.tools.registry import ToolRegistry
+from vecna.tools.registry import get_default_registry
 
 
 def test_memory_search_returns_results(tmp_path):
@@ -8,7 +8,8 @@ def test_memory_search_returns_results(tmp_path):
 
 
 def test_registry_registers_memory_tools_by_default():
-    registry = ToolRegistry()
+    registry = get_default_registry()
+    tools = {tool.name for tool in registry.list_tools()}
 
-    assert "memory_search" in registry.tools
-    assert "memory_get" in registry.tools
+    assert "memory_search" in tools
+    assert "memory_get" in tools
