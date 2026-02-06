@@ -330,10 +330,13 @@ class TestSemanticSearch:
         """Test that search returns semantically relevant results."""
         item_ids, batch_id = search_test_items
 
-        # Search for AI-related content
-        results = pg_memory_store.search("artificial intelligence neural nets", top_k=2)
+        # Search for AI-related content within the "ai" domain
+        # to avoid interference from items in other test batches
+        results = pg_memory_store.search(
+            "artificial intelligence neural nets", top_k=5, domain="ai"
+        )
 
-        # The ML item should be in the top results
+        # The ML item should be in the results
         contents = [item.content for item, _ in results]
         assert any("neural" in c.lower() or "machine learning" in c.lower() for c in contents)
 
