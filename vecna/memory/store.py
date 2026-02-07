@@ -52,7 +52,6 @@ class MemoryStore:
 
         # Embedding client (lazy init)
         self._embed_client = None
-        self._local_model = None
 
     def _get_embedder(self):
         """
@@ -105,16 +104,10 @@ class MemoryStore:
 
         embedder = self._get_embedder()
 
-        # Check if it's a local model (SentenceTransformer) or OpenAI client
-        if hasattr(embedder, "encode"):
-            # Local sentence-transformers
-            embeddings = embedder.encode(texts, convert_to_numpy=True)
-            return embeddings
-        else:
-            # OpenAI API
-            response = embedder.embeddings.create(model=self.embedding_model, input=texts)
-            embeddings = [item.embedding for item in response.data]
-            return np.array(embeddings)
+        # OpenAI API
+        response = embedder.embeddings.create(model=self.embedding_model, input=texts)
+        embeddings = [item.embedding for item in response.data]
+        return np.array(embeddings)
 
     def add(self, item: MemoryItem) -> None:
         """Add an item to memory."""
