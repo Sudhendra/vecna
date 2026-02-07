@@ -108,7 +108,7 @@ class PgMemoryStore:
             embedding_dim: Embedding dimension (must match model).
             redis_cache: Optional RedisHotCache instance for embedding caching.
             embedder: Optional callable that takes List[str] and returns np.ndarray of embeddings.
-                If provided, bypasses OpenAI/sentence-transformers. Useful for testing.
+                If provided, bypasses OpenAI. Useful for testing.
         """
         self.connection_string = connection_string or os.environ.get("VECNA_PG_URL")
         if not self.connection_string:
@@ -125,7 +125,7 @@ class PgMemoryStore:
         # Lazy initialization
         self._conn = None
         self._embed_client = None
-        self._local_model = None  # Reserved for future use
+
         self._psycopg2 = None
         self._embedding_cache: Dict[str, List[float]] = {}
 
@@ -215,7 +215,7 @@ class PgMemoryStore:
         2. Redis cache if available (shared across processes)
         3. Generate new embedding if not cached
 
-        Supports both OpenAI and local sentence-transformers.
+        Supports OpenAI embeddings and custom callable embedders.
         """
         if not texts:
             return np.array([])
@@ -258,12 +258,7 @@ class PgMemoryStore:
 
         # Embed uncached texts
         if texts_to_embed:
-            # Check if it's a custom callable embedder
-            if (
-                callable(embedder)
-                and not hasattr(embedder, "encode")
-                and not hasattr(embedder, "embeddings")
-            ):
+            if callable(embedder) and not hasattr(embedder, "embeddings"):
                 # Custom embedder function: takes list of texts, returns np.ndarray
                 new_embeddings = embedder(texts_to_embed)
                 for j, embedding in enumerate(new_embeddings):
@@ -271,24 +266,6 @@ class PgMemoryStore:
                     embedding_list = (
                         embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
                     )
-                    results.append((original_idx, embedding_list))
-
-                    # Cache the embedding in memory
-                    cache_key = self._content_hash(texts_to_embed[j])
-                    self._embedding_cache[cache_key] = embedding_list
-
-                    # Cache in Redis if available
-                    if self._redis_cache:
-                        try:
-                            self._redis_cache.set_embedding(texts_to_embed[j], embedding_list)
-                        except Exception:
-                            pass
-            elif hasattr(embedder, "encode"):
-                # Local sentence-transformers
-                new_embeddings = embedder.encode(texts_to_embed, convert_to_numpy=True)
-                for j, embedding in enumerate(new_embeddings):
-                    original_idx = text_indices[j]
-                    embedding_list = embedding.tolist()
                     results.append((original_idx, embedding_list))
 
                     # Cache the embedding in memory
