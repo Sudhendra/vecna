@@ -593,6 +593,7 @@ After the memory system is solid, these are the next priorities:
 | Autonomous scheduling | Backoff, rate limiting, configurable wake intervals | Safe long-running autonomous operation |
 
 ### P1: Tool Expansion
+**NOTE**: Use unbrowse tool for browsing
 
 | Component | What | Why |
 |-----------|------|-----|
