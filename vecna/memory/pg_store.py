@@ -557,11 +557,16 @@ class PgMemoryStore:
         item_type: Optional[str] = None,
         min_confidence: float = 0.0,
         domain: Optional[str] = None,
+        hybrid: bool = True,
+        vector_weight: float = 0.7,
+        text_weight: float = 0.3,
+        min_vector_score: float = 0.0,
     ) -> List[Tuple[MemoryItem, float]]:
         """
         Semantic search over memory items.
 
-        Uses pgvector for ANN search with cosine similarity.
+        Uses pgvector for ANN search with cosine similarity and optionally
+        combines full-text search scores for hybrid retrieval.
         Returns list of (item, similarity_score) tuples.
         """
         conn = self._get_connection()
@@ -587,16 +592,42 @@ class PgMemoryStore:
                 where_clauses.append("domain = %s")
                 filter_params.append(domain)
 
-            # Build final params list:
-            # 1. query_vector for similarity calculation in SELECT
-            # 2. filter params for WHERE clause
-            # 3. query_vector for ORDER BY
-            # 4. top_k for LIMIT
-            final_params = [query_vector] + filter_params + [query_vector, top_k]
+            has_text_tokens = any(ch.isalnum() for ch in query)
 
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
+            if hybrid and has_text_tokens:
+                query_sql = f"""
+                    WITH vector_scores AS (
+                        SELECT id, 1 - (embedding <=> %s::vector) AS vec_score
+                        FROM memory_items
+                        WHERE {" AND ".join(where_clauses)}
+                        AND 1 - (embedding <=> %s::vector) > %s
+                    ),
+                    text_scores AS (
+                        SELECT id, ts_rank_cd(search_vector,
+                            plainto_tsquery('english', %s)) AS text_score
+                        FROM memory_items
+                        WHERE search_vector @@ plainto_tsquery('english', %s)
+                    )
+                    SELECT m.id, m.content, m.item_type, m.confidence, m.domain, m.source_model,
+                           m.embedding, m.metadata, m.retrieval_count, m.last_retrieved_at,
+                           m.created_at, m.updated_at,
+                           COALESCE(v.vec_score, 0) * %s + COALESCE(t.text_score, 0) * %s
+                           AS similarity
+                    FROM memory_items m
+                    LEFT JOIN vector_scores v ON m.id = v.id
+                    LEFT JOIN text_scores t ON m.id = t.id
+                    WHERE v.id IS NOT NULL OR t.id IS NOT NULL
+                    ORDER BY similarity DESC
+                    LIMIT %s
+                """
+
+                final_params = (
+                    [query_vector, query_vector, min_vector_score]
+                    + filter_params
+                    + [query, query, vector_weight, text_weight, top_k]
+                )
+            else:
+                query_sql = f"""
                     SELECT id, content, item_type, confidence, domain, source_model,
                            embedding, metadata, retrieval_count, last_retrieved_at,
                            created_at, updated_at,
@@ -605,10 +636,11 @@ class PgMemoryStore:
                     WHERE {" AND ".join(where_clauses)}
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
-                """,
-                    final_params,
-                )
+                """
+                final_params = [query_vector] + filter_params + [query_vector, top_k]
 
+            with conn.cursor() as cur:
+                cur.execute(query_sql, final_params)
                 rows = cur.fetchall()
 
             # Update retrieval counts
