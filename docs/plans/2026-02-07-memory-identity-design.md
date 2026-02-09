@@ -173,8 +173,8 @@ class MemoryMirror:
         """Chunk all changed markdown files, embed, store in PG.
         Returns number of chunks indexed. Uses hash-based dirty check."""
 
-    async def extract_facts_to_pg(self, markdown_content: str) -> List[Fact]:
-        """Parse structured facts from markdown and store in PG."""
+    async def extract_facts_to_pg(self, facts: List[Fact], beliefs: List[Belief]) -> None:
+        """Persist structured facts/beliefs to PG memory_items."""
 
     # --- PG → Markdown ---
     async def promote_to_memory(self, facts: List[Fact], beliefs: List[Belief]) -> None:
@@ -306,7 +306,7 @@ Output routing:
 | `session_summary` | Today's daily log | `mirror.append_daily_log()` |
 | `task_state` | WORKING.md | `mirror.update_working()` |
 | `new_facts` + `new_beliefs` (confidence > 0.7) | MEMORY.md | `mirror.promote_to_memory()` |
-| `new_facts` + `new_beliefs` (all) | PG memory_items table | `mirror.extract_facts_to_pg()` |
+| `new_facts` + `new_beliefs` (all) | PG memory_items table | `mirror.extract_facts_to_pg()` (structured input) |
 | `key_decisions` | MEMORY.md `## Key Decisions` | `mirror.promote_to_memory()` |
 
 ### Mid-Session Flush
@@ -423,7 +423,7 @@ Called when conversation ends. Runs full compaction pipeline.
             await self.mirror.promote_to_memory(promotable_facts, promotable_beliefs)
 
         # 4. Sync all facts/beliefs to PG (for search, regardless of confidence)
-        await self.mirror.extract_facts_to_pg(result.new_facts + result.new_beliefs)
+        await self.mirror.extract_facts_to_pg(result.new_facts, result.new_beliefs)
 
         # 5. Re-index updated markdown files
         await self.mirror.index_markdown_files()
