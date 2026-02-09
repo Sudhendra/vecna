@@ -10,7 +10,7 @@ This module provides:
 Designed for the Vecna hive mind substrate.
 """
 
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -432,6 +432,89 @@ class PgMemoryStore:
             conn.rollback()
             logger.error(f"Failed to add memory items batch: {e}")
             return []
+
+    def upsert_markdown_chunks(
+        self,
+        source_file: str,
+        file_hash: str,
+        chunks: Sequence[Any],
+    ) -> int:
+        if not chunks:
+            return 0
+        conn = self._get_connection()
+
+        try:
+            texts = [chunk.content for chunk in chunks]
+            embeddings = self.embed(texts)
+
+            with conn.cursor() as cur:
+                for idx, chunk in enumerate(chunks):
+                    embedding = embeddings[idx].tolist() if len(embeddings) > idx else None
+                    embedding_str = self._format_vector(embedding) if embedding else None
+                    cur.execute(
+                        """
+                        INSERT INTO markdown_chunks
+                            (source_file, line_start, line_end, heading_path,
+                             content, content_hash, embedding, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::vector, NOW(), NOW())
+                        ON CONFLICT (source_file, content_hash) DO UPDATE SET
+                            line_start = EXCLUDED.line_start,
+                            line_end = EXCLUDED.line_end,
+                            heading_path = EXCLUDED.heading_path,
+                            content = EXCLUDED.content,
+                            embedding = EXCLUDED.embedding,
+                            updated_at = NOW()
+                    """,
+                        (
+                            source_file,
+                            chunk.line_start,
+                            chunk.line_end,
+                            chunk.heading_path,
+                            chunk.content,
+                            chunk.content_hash,
+                            embedding_str,
+                        ),
+                    )
+
+                cur.execute(
+                    """
+                    INSERT INTO markdown_file_hashes (file_path, content_hash, last_indexed_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (file_path) DO UPDATE SET
+                        content_hash = EXCLUDED.content_hash,
+                        last_indexed_at = NOW()
+                """,
+                    (source_file, file_hash),
+                )
+
+            conn.commit()
+            return len(chunks)
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to upsert markdown chunks: {e}")
+            return 0
+
+    def get_markdown_file_hashes(self) -> Dict[str, str]:
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT file_path, content_hash FROM markdown_file_hashes")
+                rows = cur.fetchall()
+            return {row[0]: row[1] for row in rows}
+        except Exception as e:
+            logger.error(f"Failed to fetch markdown file hashes: {e}")
+            return {}
+
+    def delete_markdown_file(self, file_path: str) -> None:
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM markdown_chunks WHERE source_file = %s", (file_path,))
+                cur.execute("DELETE FROM markdown_file_hashes WHERE file_path = %s", (file_path,))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to delete markdown file records: {e}")
 
     def get_item(self, item_id: str) -> Optional[MemoryItem]:
         """Get a memory item by ID."""
