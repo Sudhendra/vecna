@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date
 from pathlib import Path
 
 from vecna.config.schema import create_default_config
@@ -11,8 +11,8 @@ class FakePgStore:
     def __init__(self, results):
         self.results = results
 
-    def search(self, _query, limit=5, hybrid=True):
-        return self.results[:limit]
+    def search(self, _query, top_k=5, hybrid=True):
+        return self.results[:top_k]
 
 
 class FakeMirror:
@@ -54,7 +54,7 @@ async def test_start_session_reads_files_and_searches(tmp_path):
     (tmp_path / "memory").mkdir()
     (tmp_path / "SOUL.md").write_text("soul", encoding="utf-8")
     (tmp_path / "WORKING.md").write_text("working", encoding="utf-8")
-    (tmp_path / "memory" / "2026-02-09.md").write_text("daily", encoding="utf-8")
+    (tmp_path / "memory" / f"{date.today().isoformat()}.md").write_text("daily", encoding="utf-8")
 
     class SimpleItem:
         def __init__(self, content, item_type):

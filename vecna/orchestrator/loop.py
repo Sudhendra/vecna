@@ -40,6 +40,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vecna.hive")
 
 
+def _get_identity_event_type(event: object) -> str:
+    """Return a stable identity event type for tracing metadata."""
+    event_type = getattr(event, "event_type", None)
+    if isinstance(event_type, str) and event_type:
+        return event_type
+
+    trigger = getattr(event, "trigger", None)
+    if isinstance(trigger, str) and trigger:
+        return trigger
+
+    return "unknown"
+
+
 async def run_session(
     task: str,
     mode: Optional[Union[AgentMode, str]] = None,
@@ -297,9 +310,7 @@ class HiveLoop:
                                     {
                                         "coherence": self.state.self_model.coherence,
                                         "tone": self.state.self_model.get_tone().value,
-                                        "event_type": identity_event.event_type
-                                        if identity_event
-                                        else None,
+                                        "event_type": _get_identity_event_type(identity_event),
                                     }
                                 )
                     else:

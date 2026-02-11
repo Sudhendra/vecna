@@ -42,7 +42,7 @@ class SessionManager:
 
         relevant_memory = ""
         if initial_query and self.mirror.pg_store is not None:
-            chunks = self.mirror.pg_store.search(initial_query, limit=5, hybrid=True)
+            chunks = self.mirror.pg_store.search(initial_query, top_k=5, hybrid=True)
             relevant_memory = self._format_memory_results(chunks)
 
         return SessionContext(

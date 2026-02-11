@@ -705,8 +705,9 @@ class PgMemoryStore:
                 """
 
                 final_params = (
-                    [query_vector, query_vector, min_vector_score]
+                    [query_vector]
                     + filter_params
+                    + [query_vector, min_vector_score]
                     + [query, query, vector_weight, text_weight, top_k]
                 )
             else:

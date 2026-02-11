@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from vecna.config.schema import AgentMode
+from vecna.core.types import IdentityEvent
 from vecna.orchestrator import loop as loop_module
 from vecna.orchestrator import mode_router
 from vecna.orchestrator.autonomy import AutonomyLoop
@@ -49,3 +50,20 @@ def test_run_session_invalid_mode_raises_value_error():
 def test_run_session_invalid_mode_type_raises_type_error():
     with pytest.raises(TypeError, match="Invalid agent mode type"):
         asyncio.run(loop_module.run_session("hi", mode=123))  # type: ignore[arg-type]
+
+
+class LegacyIdentityEvent:
+    def __init__(self, trigger):
+        self.trigger = trigger
+
+
+def test_get_identity_event_type_prefers_event_type_alias():
+    event = IdentityEvent(trigger="periodic")
+
+    assert loop_module._get_identity_event_type(event) == "periodic"
+
+
+def test_get_identity_event_type_falls_back_to_trigger_for_legacy_events():
+    event = LegacyIdentityEvent(trigger="periodic")
+
+    assert loop_module._get_identity_event_type(event) == "periodic"

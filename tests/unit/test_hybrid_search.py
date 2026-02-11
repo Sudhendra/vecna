@@ -72,3 +72,15 @@ def test_hybrid_search_falls_back_without_text_tokens(monkeypatch):
 
     params = dummy_conn.cursor_obj.params[0]
     assert params[-1] == 3
+
+
+def test_hybrid_search_keeps_filter_params_before_second_vector(monkeypatch):
+    store = PgMemoryStore(connection_string="postgresql://test", embedder=_mock_embedder)
+    dummy_conn = DummyConnection()
+    monkeypatch.setattr(store, "_get_connection", lambda: dummy_conn)
+
+    store.search("hello world", top_k=5, hybrid=True, domain="ai")
+
+    params = dummy_conn.cursor_obj.params[0]
+    assert params[1] == "ai"
+    assert params[2].startswith("[0.0")

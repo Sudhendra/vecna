@@ -2681,7 +2681,7 @@ def memory_recent(limit: int, event_type: Optional[str]):
                 ts = ts.strftime("%Y-%m-%d %H:%M:%S")
             else:
                 ts = str(ts)[:19]
-            etype = event.event_type
+            etype = getattr(event, "event_type", getattr(event, "trigger", "unknown"))
             # Get summary from payload
             summary = event.payload.get("summary", str(event.payload)[:50])
             if len(summary) > 50:
