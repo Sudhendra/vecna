@@ -110,6 +110,23 @@ async def test_append_daily_log_formats_timestamp(tmp_path):
     assert "Summary" in text
 
 
+async def test_promote_to_memory_writes_decisions_and_questions(tmp_path):
+    mirror = MemoryMirror(workspace_dir=tmp_path, pg_store=None, config=create_default_config())
+
+    await mirror.promote_to_memory(
+        facts=[],
+        beliefs=[],
+        key_decisions=["Use generated tsvector"],
+        open_questions=["How should we archive old logs?"],
+    )
+
+    text = (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
+    assert "## Key Decisions" in text
+    assert "Use generated tsvector" in text
+    assert "## Open Questions" in text
+    assert "How should we archive old logs?" in text
+
+
 class FakeStore:
     def __init__(self, hashes):
         self.hashes = hashes

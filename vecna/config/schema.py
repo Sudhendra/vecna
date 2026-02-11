@@ -360,6 +360,7 @@ class VecnaConfig:
     # Runtime defaults
     active_group: str = "default"
     active_persona: str = "concise"
+    workspace_dir: str = "~/.vecna"
 
     # Memory substrate settings
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -432,6 +433,7 @@ class VecnaConfig:
             "memory": self.memory.to_dict(),
             "active_group": self.active_group,
             "active_persona": self.active_persona,
+            "workspace_dir": self.workspace_dir,
             "max_parallel_models": self.max_parallel_models,
             "use_routing": self.use_routing,
             "auto_execute_code": self.auto_execute_code,
@@ -490,6 +492,7 @@ class VecnaConfig:
             memory=memory,
             active_group=data.get("active_group", "default"),
             active_persona=data.get("active_persona", "concise"),
+            workspace_dir=data.get("workspace_dir", "~/.vecna"),
             max_parallel_models=data.get("max_parallel_models", 5),
             use_routing=data.get("use_routing", True),
             auto_execute_code=data.get("auto_execute_code", True),

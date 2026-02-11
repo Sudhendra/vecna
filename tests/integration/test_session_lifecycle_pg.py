@@ -38,3 +38,5 @@ def test_session_end_writes_working_and_memory(tmp_path, pg_memory_store):
 
     assert "task" in working
     assert "fact" in memory
+    assert "decision" in memory
+    assert "question" in memory

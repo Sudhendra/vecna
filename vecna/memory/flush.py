@@ -82,7 +82,30 @@ class FlushManager:
         return self._parse_flush_response(response)
 
     async def flush_mid_session(self, conversation: List[Dict[str, str]]) -> FlushResult:
-        return await self.flush_session_end(conversation)
+        if len(conversation) <= 2:
+            return self._empty_result()
+
+        start_idx = 0
+        if conversation and conversation[0].get("role") == "system":
+            content = conversation[0].get("content", "")
+            if content.startswith("[Session context compressed:"):
+                start_idx = 1
+
+        flush_end = len(conversation) - 2
+        if flush_end <= start_idx:
+            return self._empty_result()
+
+        segment = conversation[start_idx:flush_end]
+        result = await self.flush_session_end(segment)
+        if not result.session_summary:
+            return self._empty_result()
+
+        summary_block = {
+            "role": "system",
+            "content": f"[Session context compressed: {result.session_summary}]",
+        }
+        conversation[start_idx:flush_end] = [summary_block]
+        return result
 
     def _build_prompt(self, conversation: List[Dict[str, str]]) -> str:
         lines = [COMPACTION_PROMPT, "\nConversation:\n"]
@@ -131,4 +154,15 @@ class FlushManager:
             key_decisions=[],
             open_questions=[],
             tokens_used=estimate_token_count(summary),
+        )
+
+    def _empty_result(self) -> FlushResult:
+        return FlushResult(
+            session_summary="",
+            task_state=TaskState(current_task="", next_steps="", blockers=""),
+            new_facts=[],
+            new_beliefs=[],
+            key_decisions=[],
+            open_questions=[],
+            tokens_used=0,
         )

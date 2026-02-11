@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional
 import hashlib
 
 from vecna.config.schema import VecnaConfig
@@ -43,9 +43,9 @@ class MemoryMirror:
                 self.pg_store.delete_markdown_file(path)
         return indexed
 
-    async def extract_facts_to_pg(self, facts: List[Fact], beliefs: List[Belief]) -> List[Fact]:
+    async def extract_facts_to_pg(self, facts: List[Fact], beliefs: List[Belief]) -> None:
         if self.pg_store is None:
-            return []
+            return
         items: List[MemoryItem] = []
         for fact in facts:
             items.append(
@@ -80,14 +80,23 @@ class MemoryMirror:
             )
         if items:
             self.pg_store.add_items_batch(items)
-        return facts
 
-    async def promote_to_memory(self, facts: List[Fact], beliefs: List[Belief]) -> None:
+    async def promote_to_memory(
+        self,
+        facts: List[Fact],
+        beliefs: List[Belief],
+        key_decisions: Optional[List[str]] = None,
+        open_questions: Optional[List[str]] = None,
+    ) -> None:
         memory_path = self.workspace_dir / "MEMORY.md"
         if not memory_path.exists():
             memory_path.write_text("# MEMORY\n\n", encoding="utf-8")
 
         lines: List[str] = []
+        if key_decisions:
+            lines.append("## Key Decisions")
+            lines.extend([f"- {decision}" for decision in key_decisions])
+            lines.append("")
         if facts:
             lines.append("## Learned Facts")
             lines.extend([f"- {fact.content}" for fact in facts])
@@ -96,6 +105,13 @@ class MemoryMirror:
             lines.append("## Patterns & Preferences")
             lines.extend([f"- {belief.content}" for belief in beliefs])
             lines.append("")
+        if open_questions:
+            lines.append("## Open Questions")
+            lines.extend([f"- {question}" for question in open_questions])
+            lines.append("")
+
+        if not lines:
+            return
 
         with memory_path.open("a", encoding="utf-8") as handle:
             handle.write("\n".join(lines))

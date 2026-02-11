@@ -780,6 +780,38 @@ class PgMemoryStore:
             conn.rollback()
             logger.warning(f"Failed to update retrieval stats: {e}")
 
+    def record_session(
+        self,
+        session_id: str,
+        started_at: datetime,
+        ended_at: datetime,
+        summary: str,
+        tokens_used: int,
+    ) -> bool:
+        """Persist a compact session record."""
+        conn = self._get_connection()
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO sessions (session_id, started_at, ended_at, summary, tokens_used)
+                    VALUES (%s::uuid, %s, %s, %s, %s)
+                    ON CONFLICT (session_id) DO UPDATE SET
+                        started_at = EXCLUDED.started_at,
+                        ended_at = EXCLUDED.ended_at,
+                        summary = EXCLUDED.summary,
+                        tokens_used = EXCLUDED.tokens_used
+                """,
+                    (session_id, started_at, ended_at, summary, tokens_used),
+                )
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            logger.warning(f"Failed to record session: {e}")
+            return False
+
     # ============================================================
     # MEMORY EDGES (GRAPH)
     # ============================================================

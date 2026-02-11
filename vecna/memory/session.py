@@ -5,11 +5,14 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 import uuid
+import logging
 
 from vecna.config.schema import VecnaConfig
-from vecna.memory.flush import FlushManager
+from vecna.memory.flush import FlushManager, estimate_token_count
 from vecna.memory.mirror import MemoryMirror
 from vecna.memory.pg_store import MemoryItem
+
+logger = logging.getLogger("vecna.memory.session")
 
 
 @dataclass
@@ -42,7 +45,13 @@ class SessionManager:
 
         relevant_memory = ""
         if initial_query and self.mirror.pg_store is not None:
-            chunks = self.mirror.pg_store.search(initial_query, top_k=5, hybrid=True)
+            chunks = self.mirror.pg_store.search(
+                initial_query,
+                top_k=5,
+                hybrid=True,
+                vector_weight=self.config.memory.vector_weight,
+                text_weight=self.config.memory.text_weight,
+            )
             relevant_memory = self._format_memory_results(chunks)
 
         return SessionContext(
@@ -65,11 +74,40 @@ class SessionManager:
 
         promotable_facts = [f for f in result.new_facts if f.confidence > 0.7]
         promotable_beliefs = [b for b in result.new_beliefs if b.confidence > 0.7]
-        if promotable_facts or promotable_beliefs:
-            await self.mirror.promote_to_memory(promotable_facts, promotable_beliefs)
+        if promotable_facts or promotable_beliefs or result.key_decisions or result.open_questions:
+            await self.mirror.promote_to_memory(
+                promotable_facts,
+                promotable_beliefs,
+                key_decisions=result.key_decisions,
+                open_questions=result.open_questions,
+            )
 
         await self.mirror.extract_facts_to_pg(result.new_facts, result.new_beliefs)
         await self.mirror.index_markdown_files()
+
+        if self.mirror.pg_store is not None and self.started_at is not None:
+            ended_at = datetime.utcnow()
+            self.mirror.pg_store.record_session(
+                session_id=self.session_id,
+                started_at=self.started_at,
+                ended_at=ended_at,
+                summary=result.session_summary,
+                tokens_used=result.tokens_used,
+            )
+
+    async def maybe_flush_mid_session(self, conversation: List[Dict[str, str]]) -> Optional[str]:
+        tokens = sum(estimate_token_count(msg.get("content", "")) for msg in conversation)
+        if not self.flush_mgr.should_flush(tokens):
+            return None
+
+        result = await self.flush_mgr.flush_mid_session(conversation)
+        if not result.session_summary:
+            return None
+
+        await self.mirror.append_daily_log(result.session_summary, datetime.utcnow())
+        await self.mirror.extract_facts_to_pg(result.new_facts, result.new_beliefs)
+        logger.info("Mid-session flush completed")
+        return result.session_summary
 
     def format_context(self, context: SessionContext) -> str:
         return (

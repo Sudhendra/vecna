@@ -264,6 +264,7 @@ class HiveLoop:
 
                 final_response = ""
                 total_cycles = 0
+                conversation_log = [{"role": "user", "content": task}]
 
                 for cycle in range(max_cycles):
                     self.cycle_count += 1
@@ -405,6 +406,14 @@ class HiveLoop:
                             except Exception as e:
                                 logger.warning(f"Code execution failed: {e}")
 
+                        if final_response:
+                            conversation_log.append(
+                                {"role": "assistant", "content": final_response}
+                            )
+
+                        if self._session_manager:
+                            await self._session_manager.maybe_flush_mid_session(conversation_log)
+
                     # Compress memory periodically
                     if self.cycle_count % self.config.compress_every == 0:
                         self._maybe_flush_memory_before_compression()
@@ -443,7 +452,7 @@ class HiveLoop:
                 )
 
                 if self._session_manager:
-                    await self._session_manager.end_session(self.history)
+                    await self._session_manager.end_session(conversation_log)
                 return final_response
 
             except Exception as e:
@@ -463,7 +472,7 @@ class HiveLoop:
         from vecna.memory.workspace import init_workspace
 
         vecna_config = ensure_default_config()
-        workspace_dir = Path.home() / ".vecna"
+        workspace_dir = Path(vecna_config.workspace_dir).expanduser()
         init_workspace(workspace_dir)
 
         pg_store = self._state_manager._get_memory_store() if self._state_manager else None

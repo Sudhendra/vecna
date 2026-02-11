@@ -64,3 +64,48 @@ async def test_flush_session_end_fallbacks_to_extractive():
 
     assert result.session_summary
     assert isinstance(result.new_facts, list)
+
+
+async def test_flush_mid_session_compresses_older_messages():
+    payload = {
+        "session_summary": "Compressed summary",
+        "task_state": {"current_task": "", "next_steps": "", "blockers": ""},
+        "new_facts": [],
+        "new_beliefs": [],
+        "key_decisions": [],
+        "open_questions": [],
+    }
+    adapter = DummyAdapter(json.dumps(payload))
+    mirror = DummyMirror()
+    manager = FlushManager(adapter=adapter, mirror=mirror, config=None, token_threshold=10)
+    conversation = [
+        {"role": "user", "content": "msg1"},
+        {"role": "assistant", "content": "msg2"},
+        {"role": "user", "content": "msg3"},
+        {"role": "assistant", "content": "msg4"},
+        {"role": "user", "content": "msg5"},
+    ]
+
+    result = await manager.flush_mid_session(conversation)
+
+    assert result.session_summary == "Compressed summary"
+    assert len(conversation) == 3
+    assert conversation[0]["role"] == "system"
+    assert conversation[0]["content"].startswith("[Session context compressed:")
+    assert conversation[-2]["content"] == "msg4"
+    assert conversation[-1]["content"] == "msg5"
+
+
+async def test_flush_mid_session_skips_when_too_short():
+    mirror = DummyMirror()
+    manager = FlushManager(adapter=None, mirror=mirror, config=None, token_threshold=10)
+    conversation = [
+        {"role": "user", "content": "msg1"},
+        {"role": "assistant", "content": "msg2"},
+    ]
+
+    result = await manager.flush_mid_session(conversation)
+
+    assert result.session_summary == ""
+    assert conversation[0]["content"] == "msg1"
+    assert conversation[1]["content"] == "msg2"
