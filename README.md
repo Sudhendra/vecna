@@ -40,6 +40,18 @@ pip install "vecna[all]"
 pip install -e ".[dev,docs]"
 ```
 
+### Initialize Vecna (First Run)
+
+VECNA creates `~/.vecna` (config + workspace files) on first launch.
+
+```bash
+# Bootstrap ~/.vecna then exit immediately
+printf "exit\n" | vecna --skip-boot
+
+# You should now see files like config.json, SOUL.md, MEMORY.md, WORKING.md
+ls ~/.vecna
+```
+
 ### Run Memory Services (Postgres + Redis)
 
 VECNA uses PostgreSQL (with pgvector) for warm memory and Redis for hot cache.
@@ -52,7 +64,7 @@ docker compose -f docker-compose.memory.yml up -d
 export VECNA_PG_URL="postgresql://vecna:<password>@localhost:5432/vecna"
 export VECNA_REDIS_URL="redis://localhost:6379/0"
 
-# Initialize schema + pgvector index
+# Initialize/upgrade schema (safe to re-run)
 vecna mem init
 ```
 
