@@ -47,10 +47,18 @@ class MemoryMirror:
         if self.pg_store is None:
             return
         items: List[MemoryItem] = []
+        seen = set()
         for fact in facts:
+            content = fact.content.strip()
+            if not content:
+                continue
+            key = (content, "fact")
+            if key in seen:
+                continue
+            seen.add(key)
             items.append(
                 MemoryItem(
-                    content=fact.content,
+                    content=content,
                     item_type="fact",
                     confidence=fact.confidence,
                     domain=fact.domain,
@@ -63,9 +71,16 @@ class MemoryMirror:
                 )
             )
         for belief in beliefs:
+            content = belief.content.strip()
+            if not content:
+                continue
+            key = (content, "belief")
+            if key in seen:
+                continue
+            seen.add(key)
             items.append(
                 MemoryItem(
-                    content=belief.content,
+                    content=content,
                     item_type="belief",
                     confidence=belief.confidence,
                     domain="general",

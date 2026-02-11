@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 from vecna.config.schema import create_default_config
+from vecna.core.types import Belief, Fact
 from vecna.memory.mirror import MemoryMirror
 
 
@@ -125,6 +126,27 @@ async def test_promote_to_memory_writes_decisions_and_questions(tmp_path):
     assert "Use generated tsvector" in text
     assert "## Open Questions" in text
     assert "How should we archive old logs?" in text
+
+
+async def test_extract_facts_to_pg_skips_empty_content(tmp_path):
+    class BatchStore:
+        def __init__(self):
+            self.items = []
+
+        def add_items_batch(self, items):
+            self.items.extend(items)
+
+    store = BatchStore()
+    mirror = MemoryMirror(workspace_dir=tmp_path, pg_store=store, config=create_default_config())
+
+    await mirror.extract_facts_to_pg(
+        facts=[Fact(content=""), Fact(content="   "), Fact(content="Valid fact")],
+        beliefs=[Belief(content=""), Belief(content="Valid belief")],
+    )
+
+    assert len(store.items) == 2
+    assert store.items[0].content == "Valid fact"
+    assert store.items[1].content == "Valid belief"
 
 
 class FakeStore:

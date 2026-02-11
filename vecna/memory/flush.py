@@ -86,8 +86,9 @@ class FlushManager:
             return self._empty_result()
 
         start_idx = 0
-        if conversation and conversation[0].get("role") == "system":
-            content = conversation[0].get("content", "")
+        first = conversation[0] if conversation else {}
+        if isinstance(first, dict) and first.get("role") == "system":
+            content = first.get("content", "")
             if content.startswith("[Session context compressed:"):
                 start_idx = 1
 
@@ -110,8 +111,12 @@ class FlushManager:
     def _build_prompt(self, conversation: List[Dict[str, str]]) -> str:
         lines = [COMPACTION_PROMPT, "\nConversation:\n"]
         for msg in conversation:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
+            if isinstance(msg, dict):
+                role = str(msg.get("role", "user"))
+                content = str(msg.get("content", ""))
+            else:
+                role = "user"
+                content = str(msg)
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
 
@@ -121,7 +126,17 @@ class FlushManager:
         except json.JSONDecodeError:
             return self._extractive_fallback([])
 
+        if not isinstance(payload, dict):
+            return self._extractive_fallback([])
+
         task_state = payload.get("task_state") or {}
+        if not isinstance(task_state, dict):
+            task_state = {}
+
+        new_facts = self._normalize_memory_items(payload.get("new_facts") or [], item_type="fact")
+        new_beliefs = self._normalize_memory_items(
+            payload.get("new_beliefs") or [], item_type="belief"
+        )
         return FlushResult(
             session_summary=payload.get("session_summary", ""),
             task_state=TaskState(
@@ -129,21 +144,24 @@ class FlushManager:
                 next_steps=task_state.get("next_steps", ""),
                 blockers=task_state.get("blockers", ""),
             ),
-            new_facts=[
-                Fact(content=f.get("content", ""), confidence=f.get("confidence", 0.5))
-                for f in payload.get("new_facts", [])
-            ],
-            new_beliefs=[
-                Belief(content=b.get("content", ""), confidence=b.get("confidence", 0.5))
-                for b in payload.get("new_beliefs", [])
-            ],
+            new_facts=new_facts,
+            new_beliefs=new_beliefs,
             key_decisions=list(payload.get("key_decisions", []) or []),
             open_questions=list(payload.get("open_questions", []) or []),
             tokens_used=payload.get("tokens_used", 0),
         )
 
     def _extractive_fallback(self, conversation: List[Dict[str, str]]) -> FlushResult:
-        summary = " ".join(msg.get("content", "") for msg in conversation if msg.get("content"))
+        chunks = []
+        for msg in conversation:
+            if isinstance(msg, dict):
+                content = str(msg.get("content", ""))
+            else:
+                content = str(msg)
+            if content:
+                chunks.append(content)
+
+        summary = " ".join(chunks)
         if summary:
             summary = summary[:200]
         return FlushResult(
@@ -155,6 +173,37 @@ class FlushManager:
             open_questions=[],
             tokens_used=estimate_token_count(summary),
         )
+
+    def _normalize_memory_items(self, raw_items: List[Any], item_type: str) -> List[Any]:
+        normalized: List[Any] = []
+
+        for item in raw_items:
+            content = ""
+            confidence_raw: Any = 0.5
+
+            if isinstance(item, str):
+                content = item.strip()
+            elif isinstance(item, dict):
+                content = str(item.get("content", "")).strip()
+                confidence_raw = item.get("confidence", 0.5)
+            else:
+                continue
+
+            if not content:
+                continue
+
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.5
+
+            confidence = max(0.0, min(1.0, confidence))
+            if item_type == "fact":
+                normalized.append(Fact(content=content, confidence=confidence))
+            else:
+                normalized.append(Belief(content=content, confidence=confidence))
+
+        return normalized
 
     def _empty_result(self) -> FlushResult:
         return FlushResult(

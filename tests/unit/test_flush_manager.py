@@ -66,6 +66,41 @@ async def test_flush_session_end_fallbacks_to_extractive():
     assert isinstance(result.new_facts, list)
 
 
+async def test_flush_session_end_normalizes_string_and_empty_memory_items():
+    payload = {
+        "session_summary": "Summary",
+        "task_state": {
+            "current_task": "Task",
+            "next_steps": "Next",
+            "blockers": "None",
+        },
+        "new_facts": [
+            "Fact from string",
+            {"content": "Fact from dict", "confidence": 0.8},
+            {"content": "   ", "confidence": 0.9},
+            {"confidence": 0.7},
+        ],
+        "new_beliefs": [
+            "Belief from string",
+            {"content": "Belief from dict", "confidence": 0.6},
+            {"content": ""},
+        ],
+        "key_decisions": ["Decision"],
+        "open_questions": ["Question"],
+    }
+    adapter = DummyAdapter(json.dumps(payload))
+    mirror = DummyMirror()
+    manager = FlushManager(adapter=adapter, mirror=mirror, config=None, token_threshold=10)
+
+    result = await manager.flush_session_end([{"role": "user", "content": "hi"}])
+
+    assert [fact.content for fact in result.new_facts] == ["Fact from string", "Fact from dict"]
+    assert [belief.content for belief in result.new_beliefs] == [
+        "Belief from string",
+        "Belief from dict",
+    ]
+
+
 async def test_flush_mid_session_compresses_older_messages():
     payload = {
         "session_summary": "Compressed summary",
