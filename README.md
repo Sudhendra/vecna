@@ -40,6 +40,22 @@ pip install "vecna[all]"
 pip install -e ".[dev,docs]"
 ```
 
+### Run Memory Services (Postgres + Redis)
+
+VECNA uses PostgreSQL (with pgvector) for warm memory and Redis for hot cache.
+
+```bash
+# From the repo root
+docker compose -f docker-compose.memory.yml up -d
+
+# Environment (or put these in a .env file; CLI loads it automatically)
+export VECNA_PG_URL="postgresql://vecna:<password>@localhost:5432/vecna"
+export VECNA_REDIS_URL="redis://localhost:6379/0"
+
+# Initialize schema + pgvector index
+vecna mem init
+```
+
 ### Authentication
 
 VECNA uses GitHub Copilot for model access:
