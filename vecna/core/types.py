@@ -472,6 +472,14 @@ class IdentityEvent:
     # Version of the hive state
     state_version: int = 0
 
+    @property
+    def event_type(self) -> str:
+        return self.trigger
+
+    @event_type.setter
+    def event_type(self, value: str) -> None:
+        self.trigger = value
+
     def to_dict(self) -> Dict:
         return {
             "id": self.id,

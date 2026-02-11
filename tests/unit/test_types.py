@@ -389,6 +389,14 @@ class TestIdentityEvent:
         assert event.trigger == "test"
         assert event.tone == "mixed"
 
+    def test_event_type_alias(self):
+        """Test event_type alias maps to trigger."""
+        event = IdentityEvent(trigger="periodic")
+
+        assert event.event_type == "periodic"
+        event.event_type = "domain_shift"
+        assert event.trigger == "domain_shift"
+
     def test_event_to_dict(self):
         """Test event serialization."""
         event = IdentityEvent(trigger="domain_shift", domain_shift="code")

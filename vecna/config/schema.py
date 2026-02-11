@@ -72,6 +72,16 @@ class MemoryConfig:
     default_min_confidence: float = 0.3
     max_context_chars: int = 4000
 
+    # Hybrid search weighting
+    vector_weight: float = 0.7
+    text_weight: float = 0.3
+
+    # Compaction thresholds
+    flush_token_threshold: int = 6000
+
+    # Markdown indexing
+    markdown_chunk_tokens: int = 400
+
     # Dream loop settings
     dream_enabled: bool = False
     dream_interval_hours: int = 24
@@ -99,6 +109,10 @@ class MemoryConfig:
             "default_top_k": self.default_top_k,
             "default_min_confidence": self.default_min_confidence,
             "max_context_chars": self.max_context_chars,
+            "vector_weight": self.vector_weight,
+            "text_weight": self.text_weight,
+            "flush_token_threshold": self.flush_token_threshold,
+            "markdown_chunk_tokens": self.markdown_chunk_tokens,
             "dream_enabled": self.dream_enabled,
             "dream_interval_hours": self.dream_interval_hours,
             "dream_compress_after_days": self.dream_compress_after_days,
@@ -131,6 +145,10 @@ class MemoryConfig:
             default_top_k=data.get("default_top_k", 10),
             default_min_confidence=data.get("default_min_confidence", 0.3),
             max_context_chars=data.get("max_context_chars", 4000),
+            vector_weight=data.get("vector_weight", 0.7),
+            text_weight=data.get("text_weight", 0.3),
+            flush_token_threshold=data.get("flush_token_threshold", 6000),
+            markdown_chunk_tokens=data.get("markdown_chunk_tokens", 400),
             dream_enabled=data.get("dream_enabled", False),
             dream_interval_hours=data.get("dream_interval_hours", 24),
             dream_compress_after_days=data.get("dream_compress_after_days", 7),
@@ -342,6 +360,7 @@ class VecnaConfig:
     # Runtime defaults
     active_group: str = "default"
     active_persona: str = "concise"
+    workspace_dir: str = "~/.vecna"
 
     # Memory substrate settings
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -414,6 +433,7 @@ class VecnaConfig:
             "memory": self.memory.to_dict(),
             "active_group": self.active_group,
             "active_persona": self.active_persona,
+            "workspace_dir": self.workspace_dir,
             "max_parallel_models": self.max_parallel_models,
             "use_routing": self.use_routing,
             "auto_execute_code": self.auto_execute_code,
@@ -472,6 +492,7 @@ class VecnaConfig:
             memory=memory,
             active_group=data.get("active_group", "default"),
             active_persona=data.get("active_persona", "concise"),
+            workspace_dir=data.get("workspace_dir", "~/.vecna"),
             max_parallel_models=data.get("max_parallel_models", 5),
             use_routing=data.get("use_routing", True),
             auto_execute_code=data.get("auto_execute_code", True),

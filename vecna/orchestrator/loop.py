@@ -15,6 +15,7 @@ import asyncio
 from typing import List, Dict, Optional, Callable, Union
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 import logging
 import os
 
@@ -23,7 +24,9 @@ from vecna.core.hive_state import HiveState
 from vecna.core.types import HiveUpdate, Goal
 from vecna.adapters.base import BaseAdapter, ModelConfig, create_adapter
 from vecna.memory.store import MemoryStore, MemoryCompressor
-from vecna.memory.flush import estimate_token_count, should_flush
+from vecna.memory.flush import FlushManager, estimate_token_count, should_flush
+from vecna.memory.mirror import MemoryMirror
+from vecna.memory.session import SessionManager
 from vecna.orchestrator.consensus import ConsensusEngine, ConsensusConfig, DomainRouter
 from vecna.orchestrator.self_reflection import reflect, get_identity_context_for_prompt
 from vecna.tools.code_executor import execute_and_inject
@@ -35,6 +38,19 @@ from vecna.tools.types import ToolExecutionContext
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vecna.hive")
+
+
+def _get_identity_event_type(event: object) -> str:
+    """Return a stable identity event type for tracing metadata."""
+    event_type = getattr(event, "event_type", None)
+    if isinstance(event_type, str) and event_type:
+        return event_type
+
+    trigger = getattr(event, "trigger", None)
+    if isinstance(trigger, str) and trigger:
+        return trigger
+
+    return "unknown"
 
 
 async def run_session(
@@ -159,6 +175,8 @@ class HiveLoop:
 
         self.compressor = MemoryCompressor()
 
+        self._session_manager: Optional[SessionManager] = None
+
         # Tool runtime
         auto_execute_tools = self.config.auto_execute_tools
         tool_policy = self.config.tool_policy
@@ -229,6 +247,15 @@ class HiveLoop:
             tags=["vecna", "hive-think"],
         ) as trace_ctx:
             try:
+                await self._ensure_session_manager(task)
+                if self._session_manager:
+                    context = await self._session_manager.start_session(initial_query=task)
+                    session_context = self._session_manager.format_context(context)
+                    self.state.memory_summary = (
+                        f"{session_context}\n\n{self.state.memory_summary}"
+                        if self.state.memory_summary
+                        else session_context
+                    )
                 # Set the task as a goal
                 goal = Goal(content=task, priority="high", status="active")
                 self.state.add_goal(goal)
@@ -237,6 +264,7 @@ class HiveLoop:
 
                 final_response = ""
                 total_cycles = 0
+                conversation_log = [{"role": "user", "content": task}]
 
                 for cycle in range(max_cycles):
                     self.cycle_count += 1
@@ -283,9 +311,7 @@ class HiveLoop:
                                     {
                                         "coherence": self.state.self_model.coherence,
                                         "tone": self.state.self_model.get_tone().value,
-                                        "event_type": identity_event.event_type
-                                        if identity_event
-                                        else None,
+                                        "event_type": _get_identity_event_type(identity_event),
                                     }
                                 )
                     else:
@@ -380,6 +406,14 @@ class HiveLoop:
                             except Exception as e:
                                 logger.warning(f"Code execution failed: {e}")
 
+                        if final_response:
+                            conversation_log.append(
+                                {"role": "assistant", "content": final_response}
+                            )
+
+                        if self._session_manager:
+                            await self._session_manager.maybe_flush_mid_session(conversation_log)
+
                     # Compress memory periodically
                     if self.cycle_count % self.config.compress_every == 0:
                         self._maybe_flush_memory_before_compression()
@@ -417,6 +451,8 @@ class HiveLoop:
                     }
                 )
 
+                if self._session_manager:
+                    await self._session_manager.end_session(conversation_log)
                 return final_response
 
             except Exception as e:
@@ -428,6 +464,28 @@ class HiveLoop:
 
     async def run_session(self, task: str, max_cycles: Optional[int] = None) -> str:
         return await self.think(task, max_cycles=max_cycles)
+
+    async def _ensure_session_manager(self, initial_query: Optional[str] = None) -> None:
+        if self._session_manager is not None:
+            return
+        from vecna.config import ensure_default_config
+        from vecna.memory.workspace import init_workspace
+
+        vecna_config = ensure_default_config()
+        workspace_dir = Path(vecna_config.workspace_dir).expanduser()
+        init_workspace(workspace_dir)
+
+        pg_store = self._state_manager._get_memory_store() if self._state_manager else None
+        mirror = MemoryMirror(workspace_dir=workspace_dir, pg_store=pg_store, config=vecna_config)
+        adapter = self.adapters[0] if self.adapters else None
+        flush_mgr = FlushManager(adapter=adapter, mirror=mirror, config=vecna_config)
+        self._session_manager = SessionManager(
+            mirror=mirror, flush_mgr=flush_mgr, config=vecna_config
+        )
+
+    def initialize_session_manager(self) -> None:
+        if self._session_manager is None:
+            asyncio.run(self._ensure_session_manager())
 
     async def _run_cycle(self, task: str) -> tuple[List[str], List[HiveUpdate]]:
         """

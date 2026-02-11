@@ -208,6 +208,8 @@ def get_hive(use_config: bool = True):
             for adapter in adapters:
                 hive.loop.add_adapter(adapter)
 
+            hive.loop.initialize_session_manager()
+
             # Load existing state from PostgreSQL via PgStateManager
             try:
                 manager = get_default_manager()
@@ -245,6 +247,8 @@ def get_hive(use_config: bool = True):
 
     if os.getenv("GROQ_API_KEY"):
         hive.add_groq(model="llama-3.1-70b-versatile", name="groq-llama", domain="general")
+
+    hive.loop.initialize_session_manager()
 
     # Load existing state from PostgreSQL via PgStateManager
     try:
@@ -2677,7 +2681,7 @@ def memory_recent(limit: int, event_type: Optional[str]):
                 ts = ts.strftime("%Y-%m-%d %H:%M:%S")
             else:
                 ts = str(ts)[:19]
-            etype = event.event_type
+            etype = getattr(event, "event_type", getattr(event, "trigger", "unknown"))
             # Get summary from payload
             summary = event.payload.get("summary", str(event.payload)[:50])
             if len(summary) > 50:

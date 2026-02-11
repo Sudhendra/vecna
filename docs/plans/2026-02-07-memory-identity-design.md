@@ -107,10 +107,10 @@ The existing `PgMemoryStore.search()` does pure cosine similarity via pgvector. 
 ### Schema Changes (Alembic Migration)
 
 ```sql
--- Add tsvector column to memories table
-ALTER TABLE memories ADD COLUMN search_vector tsvector
+-- Add tsvector column to memory_items table
+ALTER TABLE memory_items ADD COLUMN search_vector tsvector
   GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
-CREATE INDEX idx_memories_search_vector ON memories USING GIN (search_vector);
+CREATE INDEX idx_memory_items_search_vector ON memory_items USING GIN (search_vector);
 ```
 
 The `GENERATED ALWAYS AS` clause means PostgreSQL automatically maintains the tsvector — no application code needed for indexing.
@@ -122,17 +122,17 @@ Single SQL statement using CTEs:
 ```sql
 WITH vector_scores AS (
     SELECT id, 1 - (embedding <=> %s) AS vec_score
-    FROM memories
+    FROM memory_items
     WHERE 1 - (embedding <=> %s) > %s  -- cosine threshold
 ),
 text_scores AS (
     SELECT id, ts_rank_cd(search_vector, plainto_tsquery('english', %s)) AS text_score
-    FROM memories
+    FROM memory_items
     WHERE search_vector @@ plainto_tsquery('english', %s)
 )
 SELECT m.*,
     COALESCE(v.vec_score, 0) * 0.7 + COALESCE(t.text_score, 0) * 0.3 AS hybrid_score
-FROM memories m
+FROM memory_items m
 LEFT JOIN vector_scores v ON m.id = v.id
 LEFT JOIN text_scores t ON m.id = t.id
 WHERE v.id IS NOT NULL OR t.id IS NOT NULL
@@ -173,8 +173,8 @@ class MemoryMirror:
         """Chunk all changed markdown files, embed, store in PG.
         Returns number of chunks indexed. Uses hash-based dirty check."""
 
-    async def extract_facts_to_pg(self, markdown_content: str) -> List[Fact]:
-        """Parse structured facts from markdown and store in PG."""
+    async def extract_facts_to_pg(self, facts: List[Fact], beliefs: List[Belief]) -> None:
+        """Persist structured facts/beliefs to PG memory_items."""
 
     # --- PG → Markdown ---
     async def promote_to_memory(self, facts: List[Fact], beliefs: List[Belief]) -> None:
@@ -306,7 +306,7 @@ Output routing:
 | `session_summary` | Today's daily log | `mirror.append_daily_log()` |
 | `task_state` | WORKING.md | `mirror.update_working()` |
 | `new_facts` + `new_beliefs` (confidence > 0.7) | MEMORY.md | `mirror.promote_to_memory()` |
-| `new_facts` + `new_beliefs` (all) | PG memories table | `mirror.extract_facts_to_pg()` |
+| `new_facts` + `new_beliefs` (all) | PG memory_items table | `mirror.extract_facts_to_pg()` (structured input) |
 | `key_decisions` | MEMORY.md `## Key Decisions` | `mirror.promote_to_memory()` |
 
 ### Mid-Session Flush
@@ -423,7 +423,7 @@ Called when conversation ends. Runs full compaction pipeline.
             await self.mirror.promote_to_memory(promotable_facts, promotable_beliefs)
 
         # 4. Sync all facts/beliefs to PG (for search, regardless of confidence)
-        await self.mirror.extract_facts_to_pg(result.new_facts + result.new_beliefs)
+        await self.mirror.extract_facts_to_pg(result.new_facts, result.new_beliefs)
 
         # 5. Re-index updated markdown files
         await self.mirror.index_markdown_files()
@@ -512,7 +512,7 @@ SessionManager.start_session()
 
 | Table / Column | Type | Purpose |
 |----------------|------|---------|
-| `memories.search_vector` | `TSVECTOR (GENERATED)` | Full-text search column with GIN index |
+| `memory_items.search_vector` | `TSVECTOR (GENERATED)` | Full-text search column with GIN index |
 | `markdown_chunks.id` | `UUID PRIMARY KEY` | Chunk identifier |
 | `markdown_chunks.source_file` | `TEXT` | Relative path (e.g., `MEMORY.md`) |
 | `markdown_chunks.line_start` | `INTEGER` | Starting line in source file |
