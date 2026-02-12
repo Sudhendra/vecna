@@ -24,6 +24,7 @@ _PLAN_LINE_PATTERN = re.compile(r"^Plan:\s*(?P<goal>.+)$")
 _STEP_LINE_PATTERN = re.compile(r"^(?P<step_id>E\d+):\s*(?P<tool>\w+)\[(?P<input>.*)\]$")
 _FINAL_LINE_PATTERN = re.compile(r"^Final:\s*(?P<template>.+)$")
 _REFERENCE_PATTERN = re.compile(r"#(?P<step_id>E\d+)")
+_DEFAULT_FINAL_TEMPLATE = "Use available successful tool outputs to answer the task."
 
 
 @dataclass
@@ -57,6 +58,7 @@ class RewooStepResult:
     attempts: int
     tool_result: Optional[ToolResult] = None
     error: Optional[str] = None
+    status_history: List[str] = field(default_factory=list)
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
 
@@ -116,7 +118,15 @@ class RewooEngine:
         started_perf = time.perf_counter()
         with trace_span("rewoo.plan", metadata={"task_chars": len(task)}) as span:
             plan_text = await self._generate_plan_text(task, state)
-            plan = parse_rewoo_plan(plan_text)
+            final_template_fallback = False
+            try:
+                plan = parse_rewoo_plan(plan_text)
+            except ValueError as exc:
+                if not _is_final_template_error(str(exc)):
+                    raise
+                plan = _parse_plan_with_default_final(plan_text)
+                final_template_fallback = True
+
             self.validate_plan(plan, self.registry)
 
             if len(plan.steps) > self.config.max_steps:
@@ -127,6 +137,7 @@ class RewooEngine:
             span.set_metadata(
                 {
                     "plan_steps": len(plan.steps),
+                    "final_template_fallback": final_template_fallback,
                     "duration_ms": round((time.perf_counter() - started_perf) * 1000, 2),
                 }
             )
@@ -343,6 +354,50 @@ def parse_rewoo_plan(plan: str) -> RewooPlan:
     return RewooPlan(goal=goal, steps=steps, final_prompt_template=final_prompt_template)
 
 
+def _parse_plan_with_default_final(plan: str) -> RewooPlan:
+    """Parse plan while falling back to a deterministic final template."""
+    goal = ""
+    steps: List[RewooPlanStep] = []
+
+    for raw_line in plan.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        plan_match = _PLAN_LINE_PATTERN.match(line)
+        if plan_match:
+            goal = plan_match.group("goal").strip()
+            continue
+
+        step_match = _STEP_LINE_PATTERN.match(line)
+        if step_match:
+            raw_input = step_match.group("input")
+            steps.append(
+                RewooPlanStep(
+                    step_id=step_match.group("step_id"),
+                    tool_name=step_match.group("tool"),
+                    raw_input=raw_input,
+                    depends_on=_extract_references(raw_input),
+                )
+            )
+            continue
+
+        final_match = _FINAL_LINE_PATTERN.match(line)
+        if final_match:
+            continue
+
+        raise ValueError(f"Invalid ReWOO line: {line}")
+
+    if not goal:
+        raise ValueError("Missing Plan line")
+    if not steps:
+        raise ValueError("ReWOO plan must include at least one step")
+
+    _validate_step_order(steps)
+    _validate_step_references(steps)
+    return RewooPlan(goal=goal, steps=steps, final_prompt_template=_DEFAULT_FINAL_TEMPLATE)
+
+
 def _validate_step_order(steps: List[RewooPlanStep]) -> None:
     """Ensure ReWOO steps are contiguous and monotonic E1..En."""
     expected = 1
@@ -425,6 +480,7 @@ async def execute_rewoo_plan(
                     rendered_input=step.raw_input,
                     attempts=0,
                     error="skipped due to consecutive failures",
+                    status_history=["pending", "skipped"],
                     started_at=now,
                     ended_at=now,
                 )
@@ -448,6 +504,7 @@ async def execute_rewoo_plan(
                         rendered_input=step.raw_input,
                         attempts=1,
                         error=str(exc),
+                        status_history=["pending", "running", "failed"],
                         started_at=step_started,
                         ended_at=step_ended,
                     )
@@ -508,6 +565,7 @@ async def execute_rewoo_plan(
                         rendered_input=rendered_input,
                         attempts=attempts,
                         tool_result=tool_result,
+                        status_history=["pending", "running", "succeeded"],
                         started_at=step_started,
                         ended_at=step_ended,
                     )
@@ -532,6 +590,7 @@ async def execute_rewoo_plan(
                     attempts=attempts,
                     tool_result=tool_result,
                     error=error,
+                    status_history=["pending", "running", "failed"],
                     started_at=step_started,
                     ended_at=step_ended,
                 )
@@ -578,6 +637,13 @@ def _parse_step_args(rendered_input: str) -> Dict[str, Any]:
     if isinstance(parsed, dict):
         return parsed
     return {"input": rendered_input}
+
+
+def _is_final_template_error(error_text: str) -> bool:
+    """Return True if parse error is specifically about Final template handling."""
+    return error_text.startswith("Missing Final line") or error_text.startswith(
+        "Final template references unknown step"
+    )
 
 
 def _truncate_artifact(

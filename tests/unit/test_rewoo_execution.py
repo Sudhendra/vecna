@@ -76,6 +76,7 @@ Final: done
 
     assert [step.step_id for step in execution.results] == ["E1", "E2"]
     assert [step.status for step in execution.results] == ["succeeded", "succeeded"]
+    assert execution.results[0].status_history == ["pending", "running", "succeeded"]
     assert execution.artifacts["E1"] == "first"
     assert execution.artifacts["E2"] == "first second"
 
@@ -181,6 +182,7 @@ Final: done
 
     assert [result.step_id for result in execution.results] == ["E1", "E2", "E3"]
     assert [result.status for result in execution.results] == ["failed", "failed", "skipped"]
+    assert execution.results[2].status_history == ["pending", "skipped"]
     assert calls["echo"] == 0
 
 

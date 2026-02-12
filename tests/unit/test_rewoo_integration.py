@@ -175,3 +175,40 @@ def test_hive_loop_rewoo_appends_execution_summary_to_session_log(monkeypatch):
     assert len(fake_session.end_payload) == 3
     assert fake_session.end_payload[2]["role"] == "system"
     assert "[REWOO_EXECUTION]" in fake_session.end_payload[2]["content"]
+
+
+def test_hive_loop_uses_rewoo_when_plan_missing_final(monkeypatch):
+    loop = _build_loop(enable_rewoo_planning=True)
+
+    async def fake_ensure_session_manager(initial_query=None):
+        return None
+
+    async def fail_run_cycle(task):
+        raise AssertionError("legacy run cycle should not run for Final fallback")
+
+    async def fake_generate(prompt):
+        if "strict ReWOO plan" in prompt:
+            return """Plan: no final provided
+E1: echo[{"text":"ok"}]
+"""
+        return ""
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="echo", description="echo", input_schema={"text": "string"}),
+        executor=lambda args, ctx: ToolResult("echo", True, args["text"]),
+    )
+    loop.tool_registry = registry
+    loop.tool_runtime = ToolRuntime(
+        registry=registry,
+        permission_manager=ToolPermissionManager(ToolPolicy()),
+    )
+
+    monkeypatch.setattr(loop, "_ensure_session_manager", fake_ensure_session_manager)
+    monkeypatch.setattr(loop, "_run_cycle", fail_run_cycle)
+    monkeypatch.setattr(loop.adapters[0], "generate", fake_generate)
+
+    response = asyncio.run(loop.think("complex task"))
+
+    assert "Successful tool outputs" in response
+    assert "E1: ok" in response
