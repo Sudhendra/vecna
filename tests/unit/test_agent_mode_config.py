@@ -54,3 +54,39 @@ def test_loader_preserves_agent_mode_from_config(tmp_path, monkeypatch):
     cfg = loader.load_config(force_reload=True)
 
     assert cfg.agent_mode == AgentMode.explorer
+
+
+def test_from_dict_parses_rewoo_settings():
+    cfg = VecnaConfig.from_dict(
+        {
+            "enable_rewoo_planning": True,
+            "rewoo_max_steps": 12,
+            "rewoo_retry_limit": 3,
+            "rewoo_backoff_base_seconds": 0.5,
+            "rewoo_max_artifact_chars": 1024,
+        }
+    )
+
+    assert cfg.enable_rewoo_planning is True
+    assert cfg.rewoo_max_steps == 12
+    assert cfg.rewoo_retry_limit == 3
+    assert cfg.rewoo_backoff_base_seconds == 0.5
+    assert cfg.rewoo_max_artifact_chars == 1024
+
+
+def test_to_dict_includes_rewoo_settings():
+    cfg = VecnaConfig(
+        enable_rewoo_planning=True,
+        rewoo_max_steps=10,
+        rewoo_retry_limit=2,
+        rewoo_backoff_base_seconds=0.4,
+        rewoo_max_artifact_chars=2048,
+    )
+
+    serialized = cfg.to_dict()
+
+    assert serialized["enable_rewoo_planning"] is True
+    assert serialized["rewoo_max_steps"] == 10
+    assert serialized["rewoo_retry_limit"] == 2
+    assert serialized["rewoo_backoff_base_seconds"] == 0.4
+    assert serialized["rewoo_max_artifact_chars"] == 2048

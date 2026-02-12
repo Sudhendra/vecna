@@ -375,6 +375,13 @@ class VecnaConfig:
     # Agent autonomy settings
     agent_mode: AgentMode = AgentMode.assistant
 
+    # ReWOO planning settings
+    enable_rewoo_planning: bool = False
+    rewoo_max_steps: int = 8
+    rewoo_retry_limit: int = 1
+    rewoo_backoff_base_seconds: float = 0.25
+    rewoo_max_artifact_chars: int = 4000
+
     # Version for schema migrations
     config_version: int = 2
 
@@ -440,6 +447,11 @@ class VecnaConfig:
             "agent_mode": agent_mode.value,
             "auto_execute_tools": self.auto_execute_tools,
             "tool_policy": self.tool_policy.to_dict(),
+            "enable_rewoo_planning": self.enable_rewoo_planning,
+            "rewoo_max_steps": self.rewoo_max_steps,
+            "rewoo_retry_limit": self.rewoo_retry_limit,
+            "rewoo_backoff_base_seconds": self.rewoo_backoff_base_seconds,
+            "rewoo_max_artifact_chars": self.rewoo_max_artifact_chars,
         }
 
     @classmethod
@@ -499,6 +511,11 @@ class VecnaConfig:
             agent_mode=agent_mode,
             auto_execute_tools=auto_execute_tools,
             tool_policy=tool_policy,
+            enable_rewoo_planning=data.get("enable_rewoo_planning", False),
+            rewoo_max_steps=data.get("rewoo_max_steps", 8),
+            rewoo_retry_limit=data.get("rewoo_retry_limit", 1),
+            rewoo_backoff_base_seconds=data.get("rewoo_backoff_base_seconds", 0.25),
+            rewoo_max_artifact_chars=data.get("rewoo_max_artifact_chars", 4000),
             config_version=data.get("config_version", 1),
         )
 

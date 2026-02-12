@@ -199,6 +199,11 @@ def get_hive(use_config: bool = True):
                 tool_policy=vecna_config.tool_policy.to_policy(),
                 use_pg_memory=True,  # Use PgStateManager
                 persist_identity_events=True,  # Persist identity events to PG
+                enable_rewoo_planning=vecna_config.enable_rewoo_planning,
+                rewoo_max_steps=vecna_config.rewoo_max_steps,
+                rewoo_retry_limit=vecna_config.rewoo_retry_limit,
+                rewoo_backoff_base_seconds=vecna_config.rewoo_backoff_base_seconds,
+                rewoo_max_artifact_chars=vecna_config.rewoo_max_artifact_chars,
             )
 
             hive = HiveMind(hive_config)
