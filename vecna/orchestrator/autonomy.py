@@ -27,5 +27,9 @@ class AutonomyLoop(HiveLoop):
             goal = item.get("goal")
             if not goal:
                 continue
-            results.append(await self.think(goal, max_cycles=max_cycles))
+            results.append(await self._run_goal(goal, max_cycles=max_cycles))
         return results
+
+    async def _run_goal(self, goal: str, max_cycles: Optional[int] = None) -> str:
+        """Execute one queued goal, preferring ReWOO when enabled."""
+        return await self.think(goal, max_cycles=max_cycles)

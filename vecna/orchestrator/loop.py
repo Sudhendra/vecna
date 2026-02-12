@@ -28,6 +28,7 @@ from vecna.memory.flush import FlushManager, estimate_token_count, should_flush
 from vecna.memory.mirror import MemoryMirror
 from vecna.memory.session import SessionManager
 from vecna.orchestrator.consensus import ConsensusEngine, ConsensusConfig, DomainRouter
+from vecna.orchestrator.rewoo import RewooEngine, RewooEngineConfig, RewooExecutionResult
 from vecna.orchestrator.self_reflection import reflect, get_identity_context_for_prompt
 from vecna.tools.code_executor import execute_and_inject
 from vecna.tools.registry import get_default_registry
@@ -127,6 +128,19 @@ class HiveConfig:
 
     # Soft threshold for flushing memory
     memory_flush_soft_threshold: int = 500
+
+    # Enable ReWOO planning-execution path
+    enable_rewoo_planning: bool = False
+
+    # ReWOO execution settings
+    rewoo_max_steps: int = 8
+    rewoo_retry_limit: int = 1
+    rewoo_backoff_base_seconds: float = 0.25
+    rewoo_max_artifact_chars: int = 4000
+
+    # ReWOO eligibility tuning
+    rewoo_min_task_words: int = 8
+    rewoo_force: bool = False
 
 
 class HiveLoop:
@@ -261,6 +275,44 @@ class HiveLoop:
                 self.state.add_goal(goal)
 
                 logger.info(f"Hive thinking about: {task[:100]}...")
+
+                if self.config.enable_rewoo_planning and self._is_rewoo_eligible(task):
+                    rewoo_result = await self._run_rewoo_task(task=task, session_id=session_id)
+                    if rewoo_result.used_rewoo:
+                        rewoo_response = rewoo_result.answer
+                        self._mark_goal_completed(task)
+
+                        trace_ctx.set_output(rewoo_response[:2000] if rewoo_response else "")
+                        trace_ctx.set_metadata(
+                            {
+                                "total_cycles": 0,
+                                "final_coherence": self.state.self_model.coherence
+                                if self.state.self_model
+                                else None,
+                                "rewoo_used": True,
+                                "rewoo_fallback_reason": rewoo_result.fallback_reason,
+                            }
+                        )
+
+                        if self._session_manager:
+                            rewoo_summary = self._build_rewoo_session_summary(rewoo_result)
+                            await self._session_manager.end_session(
+                                [
+                                    {"role": "user", "content": task},
+                                    {"role": "assistant", "content": rewoo_response},
+                                    {"role": "system", "content": rewoo_summary},
+                                ]
+                            )
+                        return rewoo_response
+
+                    if rewoo_result.fallback_reason:
+                        logger.info(
+                            "ReWOO fallback to legacy loop for task '%s': %s",
+                            task[:80],
+                            rewoo_result.fallback_reason,
+                        )
+                elif self.config.enable_rewoo_planning:
+                    logger.debug("Task did not meet ReWOO eligibility heuristic")
 
                 final_response = ""
                 total_cycles = 0
@@ -436,9 +488,7 @@ class HiveLoop:
                         break
 
                 # Mark goal complete
-                for g in self.state.goals:
-                    if g.content == task:
-                        g.status = "completed"
+                self._mark_goal_completed(task)
 
                 # Update trace with final output
                 trace_ctx.set_output(final_response[:2000] if final_response else "")
@@ -640,6 +690,78 @@ class HiveLoop:
             self.memory.add_from_state(self.state)
 
         return responses, updates
+
+    async def _run_rewoo_task(self, task: str, session_id: str) -> RewooExecutionResult:
+        """Run ReWOO plan-execute-synthesize path with structured fallback result."""
+        if not self.tool_runtime:
+            return RewooExecutionResult(
+                answer="",
+                execution=None,
+                used_rewoo=False,
+                fallback_reason="tool runtime unavailable",
+            )
+
+        planner_adapter = self.adapters[0] if self.adapters else None
+        engine = RewooEngine(
+            runtime=self.tool_runtime,
+            registry=self.tool_registry,
+            planner_adapter=planner_adapter,
+            config=RewooEngineConfig(
+                max_steps=self.config.rewoo_max_steps,
+                retry_limit=self.config.rewoo_retry_limit,
+                backoff_base_seconds=self.config.rewoo_backoff_base_seconds,
+                max_artifact_chars=self.config.rewoo_max_artifact_chars,
+            ),
+        )
+        return await engine.run(task, self.state, ToolExecutionContext(session_id=session_id))
+
+    def _is_rewoo_eligible(self, task: str) -> bool:
+        """Heuristic gate for routing tasks through ReWOO."""
+        if self.config.rewoo_force:
+            return True
+
+        lowered = task.strip().lower()
+        if not lowered:
+            return False
+
+        complexity_signals = [
+            " then ",
+            " and ",
+            " step by step",
+            " first ",
+            " second ",
+            " compare ",
+            " research ",
+            " investigate ",
+        ]
+        if any(signal in f" {lowered} " for signal in complexity_signals):
+            return True
+
+        return (
+            len([word for word in lowered.split(" ") if word]) >= self.config.rewoo_min_task_words
+        )
+
+    def _mark_goal_completed(self, task: str) -> None:
+        """Mark matching active goals as completed."""
+        for goal in self.state.goals:
+            if goal.content == task:
+                goal.status = "completed"
+
+    def _build_rewoo_session_summary(self, result: RewooExecutionResult) -> str:
+        """Build a compact execution summary for session compaction inputs."""
+        if result.execution is None:
+            return "[REWOO_EXECUTION] no execution details available"
+
+        statuses = [f"{step.step_id}:{step.status}" for step in result.execution.results]
+        return (
+            "[REWOO_EXECUTION] "
+            f"id={result.execution.execution_id}; "
+            f"steps={len(result.execution.plan.steps)}; "
+            f"succeeded={result.execution.steps_succeeded}; "
+            f"failed={result.execution.steps_failed}; "
+            f"policy_denials={result.execution.policy_denials}; "
+            f"status_flow={', '.join(statuses)}"
+        )
 
     async def _compress_memory(self) -> None:
         """Compress and summarize the hive state."""
