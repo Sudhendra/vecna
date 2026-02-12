@@ -592,6 +592,8 @@ After the memory system is solid, these are the next priorities:
 | Exploration / curiosity engine | Score contradictions, knowledge gaps, and novel topics to generate exploration goals | Vecna should be curious, not just reactive |
 | Autonomous scheduling | Backoff, rate limiting, configurable wake intervals | Safe long-running autonomous operation |
 
+Status note (2026-02-11): Initial ReWOO planning/execution implementation has landed behind a feature flag (`enable_rewoo_planning`) with typed plans, ToolRuntime execution, retries, circuit-breaks, and fallback to legacy loop.
+
 ### P1: Tool Expansion
 **NOTE**: Use unbrowse tool for browsing
 
