@@ -1,3 +1,5 @@
+"""Unit tests for agent mode configuration handling."""
+
 import json
 import logging
 from typing import Any, cast
@@ -19,6 +21,14 @@ def test_agent_mode_parsing():
 def test_invalid_agent_mode_defaults_and_warns(caplog):
     with caplog.at_level(logging.WARNING, logger="vecna.config"):
         cfg = VecnaConfig.from_dict({"agent_mode": "invalid"})
+
+    assert cfg.agent_mode == AgentMode.assistant
+    assert any("Invalid agent_mode" in record.getMessage() for record in caplog.records)
+
+
+def test_non_string_agent_mode_in_from_dict_defaults_and_warns(caplog):
+    with caplog.at_level(logging.WARNING, logger="vecna.config"):
+        cfg = VecnaConfig.from_dict({"agent_mode": 123})
 
     assert cfg.agent_mode == AgentMode.assistant
     assert any("Invalid agent_mode" in record.getMessage() for record in caplog.records)
@@ -64,6 +74,8 @@ def test_from_dict_parses_rewoo_settings():
             "rewoo_retry_limit": 3,
             "rewoo_backoff_base_seconds": 0.5,
             "rewoo_max_artifact_chars": 1024,
+            "rewoo_min_task_words": 4,
+            "rewoo_force": True,
         }
     )
 
@@ -72,6 +84,8 @@ def test_from_dict_parses_rewoo_settings():
     assert cfg.rewoo_retry_limit == 3
     assert cfg.rewoo_backoff_base_seconds == 0.5
     assert cfg.rewoo_max_artifact_chars == 1024
+    assert cfg.rewoo_min_task_words == 4
+    assert cfg.rewoo_force is True
 
 
 def test_to_dict_includes_rewoo_settings():
@@ -81,6 +95,8 @@ def test_to_dict_includes_rewoo_settings():
         rewoo_retry_limit=2,
         rewoo_backoff_base_seconds=0.4,
         rewoo_max_artifact_chars=2048,
+        rewoo_min_task_words=6,
+        rewoo_force=True,
     )
 
     serialized = cfg.to_dict()
@@ -90,3 +106,5 @@ def test_to_dict_includes_rewoo_settings():
     assert serialized["rewoo_retry_limit"] == 2
     assert serialized["rewoo_backoff_base_seconds"] == 0.4
     assert serialized["rewoo_max_artifact_chars"] == 2048
+    assert serialized["rewoo_min_task_words"] == 6
+    assert serialized["rewoo_force"] is True

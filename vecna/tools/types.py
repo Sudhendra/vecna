@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -8,7 +8,7 @@ class ToolSpec:
     description: str
     input_schema: Dict[str, Any]
     output_schema: Optional[Dict[str, Any]] = None
-    tags: list[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -35,3 +35,4 @@ class ToolExecutionContext:
     user_id: Optional[str] = None
     request_id: Optional[str] = None
     domain: Optional[str] = None
+    allowed_fs_roots: List[str] = field(default_factory=list)

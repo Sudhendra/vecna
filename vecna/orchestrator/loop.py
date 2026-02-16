@@ -34,6 +34,7 @@ from vecna.tools.code_executor import execute_and_inject
 from vecna.tools.registry import get_default_registry
 from vecna.tools.permissions import ToolPermissionManager, ToolPolicy
 from vecna.tools.runtime import ToolRuntime, RuntimeConfig
+from vecna.tools.quotas import QuotaConfig, ToolQuotaManager
 from vecna.tools.types import ToolExecutionContext
 
 
@@ -123,6 +124,9 @@ class HiveConfig:
     # Persist identity events to PG on significant changes
     persist_identity_events: bool = True
 
+    # Enable identity growth updates from repeated beliefs
+    enable_identity_growth: bool = False
+
     # Memory summary token limit
     memory_summary_token_limit: int = 4000
 
@@ -137,10 +141,20 @@ class HiveConfig:
     rewoo_retry_limit: int = 1
     rewoo_backoff_base_seconds: float = 0.25
     rewoo_max_artifact_chars: int = 4000
+    rewoo_policy_denied_behavior: str = "fail_step"
+    rewoo_artifact_injection_mode: str = "final_summary"
+    rewoo_use_separate_synthesizer: bool = False
 
     # ReWOO eligibility tuning
     rewoo_min_task_words: int = 8
     rewoo_force: bool = False
+
+    # Tooling feature flags and quotas
+    enable_web_tools: bool = False
+    enable_fs_tools: bool = False
+    tool_quota_per_session: int = 0
+    tool_quota_per_tool: int = 0
+    tool_allowed_fs_roots: List[str] = field(default_factory=lambda: ["~/.vecna"])
 
 
 class HiveLoop:
@@ -194,11 +208,23 @@ class HiveLoop:
         # Tool runtime
         auto_execute_tools = self.config.auto_execute_tools
         tool_policy = self.config.tool_policy
-        self.tool_registry = get_default_registry()
+        self.tool_registry = get_default_registry(
+            enable_web_tools=self.config.enable_web_tools,
+            enable_fs_tools=self.config.enable_fs_tools,
+        )
         self.tool_permissions = ToolPermissionManager(tool_policy)
+        tool_quota_manager = None
+        if self.config.tool_quota_per_session > 0 or self.config.tool_quota_per_tool > 0:
+            tool_quota_manager = ToolQuotaManager(
+                QuotaConfig(
+                    per_session=self.config.tool_quota_per_session,
+                    per_tool=self.config.tool_quota_per_tool,
+                )
+            )
         self.tool_runtime = ToolRuntime(
             registry=self.tool_registry,
             permission_manager=self.tool_permissions,
+            quota_manager=tool_quota_manager,
             config=RuntimeConfig(auto_execute_tools=auto_execute_tools),
         )
 
@@ -357,7 +383,11 @@ class HiveLoop:
                     # === SELF-REFLECTION ===
                     if should_trace_pipeline():
                         with trace_span("identity.reflect") as span:
-                            identity_event = reflect(self.state, task)
+                            identity_event = reflect(
+                                self.state,
+                                task,
+                                enable_identity_growth=self.config.enable_identity_growth,
+                            )
                             if identity_event and self.state.self_model:
                                 span.set_metadata(
                                     {
@@ -367,7 +397,11 @@ class HiveLoop:
                                     }
                                 )
                     else:
-                        identity_event = reflect(self.state, task)
+                        identity_event = reflect(
+                            self.state,
+                            task,
+                            enable_identity_growth=self.config.enable_identity_growth,
+                        )
 
                     if identity_event and self.config.verbose and self.state.self_model:
                         logger.info(
@@ -400,7 +434,9 @@ class HiveLoop:
                                             tool_results,
                                         ) = await self.tool_runtime.execute_calls(
                                             final_response,
-                                            ToolExecutionContext(session_id=session_id),
+                                            self._build_tool_execution_context(
+                                                session_id=session_id
+                                            ),
                                         )
                                         span.set_metadata(
                                             {
@@ -420,7 +456,7 @@ class HiveLoop:
                                         tool_results,
                                     ) = await self.tool_runtime.execute_calls(
                                         final_response,
-                                        ToolExecutionContext(session_id=session_id),
+                                        self._build_tool_execution_context(session_id=session_id),
                                     )
                                     if tool_results and self.config.verbose:
                                         logger.info(f"Executed {len(tool_results)} tool call(s)")
@@ -702,18 +738,57 @@ class HiveLoop:
             )
 
         planner_adapter = self.adapters[0] if self.adapters else None
+        synthesizer_adapter = None
+        if self.config.rewoo_use_separate_synthesizer and len(self.adapters) > 1:
+            synthesizer_adapter = self.adapters[1]
         engine = RewooEngine(
             runtime=self.tool_runtime,
             registry=self.tool_registry,
             planner_adapter=planner_adapter,
+            synthesizer_adapter=synthesizer_adapter,
             config=RewooEngineConfig(
                 max_steps=self.config.rewoo_max_steps,
                 retry_limit=self.config.rewoo_retry_limit,
                 backoff_base_seconds=self.config.rewoo_backoff_base_seconds,
                 max_artifact_chars=self.config.rewoo_max_artifact_chars,
+                policy_denied_behavior=self.config.rewoo_policy_denied_behavior,
+                artifact_injection_mode=self.config.rewoo_artifact_injection_mode,
             ),
         )
-        return await engine.run(task, self.state, ToolExecutionContext(session_id=session_id))
+        result = await engine.run(
+            task,
+            self.state,
+            self._build_tool_execution_context(session_id=session_id),
+        )
+        if (
+            result.used_rewoo
+            and result.execution is not None
+            and self.config.rewoo_artifact_injection_mode == "per_step"
+        ):
+            self._inject_rewoo_artifacts_into_memory_summary(result)
+        return result
+
+    def _inject_rewoo_artifacts_into_memory_summary(self, result: RewooExecutionResult) -> None:
+        """Inject successful ReWOO artifacts into memory summary."""
+        execution = result.execution
+        if execution is None:
+            return
+
+        artifact_lines: List[str] = []
+        for step_result in execution.results:
+            if step_result.status != "succeeded":
+                continue
+            artifact = execution.artifacts.get(step_result.step_id, "")
+            artifact_lines.append(f"[REWOO_ARTIFACT] {step_result.step_id}: {artifact}")
+
+        if not artifact_lines:
+            return
+
+        block = "\n".join(artifact_lines)
+        if self.state.memory_summary:
+            self.state.memory_summary = f"{self.state.memory_summary}\n{block}"
+        else:
+            self.state.memory_summary = block
 
     def _is_rewoo_eligible(self, task: str) -> bool:
         """Heuristic gate for routing tasks through ReWOO."""
@@ -823,7 +898,11 @@ class HiveLoop:
             )
 
             # Self-reflection after consensus
-            identity_event = reflect(self.state, task)
+            identity_event = reflect(
+                self.state,
+                task,
+                enable_identity_growth=self.config.enable_identity_growth,
+            )
 
             # Persist identity event to PG if configured and significant
             if identity_event and self.config.persist_identity_events and self._state_manager:
@@ -842,7 +921,7 @@ class HiveLoop:
             if response and self.config.auto_execute_tools and self.tool_runtime:
                 try:
                     response, _ = await self.tool_runtime.execute_calls(
-                        response, ToolExecutionContext()
+                        response, self._build_tool_execution_context(session_id=None)
                     )
                 except Exception as e:
                     logger.warning(f"Tool execution failed: {e}")
@@ -866,6 +945,12 @@ class HiveLoop:
     def get_state(self) -> HiveState:
         """Get current hive state."""
         return self.state
+
+    def _build_tool_execution_context(self, session_id: Optional[str]) -> ToolExecutionContext:
+        return ToolExecutionContext(
+            session_id=session_id,
+            allowed_fs_roots=list(self.config.tool_allowed_fs_roots),
+        )
 
     def save_state(self, filepath: Optional[str] = None) -> None:
         """

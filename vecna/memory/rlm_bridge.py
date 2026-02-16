@@ -16,14 +16,15 @@ The RLM container connects directly to PostgreSQL using the VECNA_PG_URL
 environment variable passed at container startup.
 """
 
-import os
-import json
 import asyncio
-import subprocess
+import json
 import logging
-from typing import Optional, Dict, Any, List, Tuple
+import os
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("vecna.rlm_bridge")
 
@@ -52,6 +53,15 @@ class RLMConfig:
 
     # PostgreSQL connection URL (passed to container as env var)
     pg_url: Optional[str] = None
+
+    # Enable Docker seccomp profile for container hardening
+    enable_seccomp: bool = False
+
+    # Optional seccomp profile path. Defaults to Vecna's bundled profile.
+    seccomp_profile_path: Optional[str] = None
+
+    # Idle TTL for prewarmed container in seconds. None disables expiry.
+    container_ttl_seconds: Optional[int] = None
 
 
 @dataclass
@@ -89,6 +99,7 @@ class RLMBridge:
         self._docker_available: Optional[bool] = None
         self._prewarmed: bool = False
         self._packages_installed: bool = False
+        self._last_activity: Optional[datetime] = None
 
         # Get PG URL from config or environment
         if self.config.pg_url is None:
@@ -125,6 +136,7 @@ class RLMBridge:
             return False
 
         if self._prewarmed and self._container_id:
+            self._touch_activity()
             return True
 
         try:
@@ -140,6 +152,10 @@ class RLMBridge:
                 "--memory",
                 self.config.memory_limit,
             ]
+
+            if self.config.enable_seccomp:
+                profile_path = self._get_seccomp_profile_path()
+                cmd.extend(["--security-opt", f"seccomp={profile_path}"])
 
             # Pass PostgreSQL URL as environment variable
             if self.config.pg_url:
@@ -164,6 +180,7 @@ class RLMBridge:
             if result.returncode == 0:
                 self._container_id = stdout.decode().strip()
                 self._prewarmed = True
+                self._touch_activity()
                 logger.info(f"RLM container prewarmed: {self._container_id[:12]}")
 
                 # Install psycopg2-binary for PostgreSQL access
@@ -188,25 +205,28 @@ class RLMBridge:
 
         Returns (stdout, stderr, return_code).
         """
-        if not self._container_id:
-            # Try to prewarm first
-            if not await self.prewarm():
-                raise DockerNotAvailableError("RLM container not available")
+        await self._ensure_container_ready()
 
         try:
             cmd = ["docker", "exec", self._container_id, "python", "-c", code]
 
-            result = await asyncio.wait_for(
-                asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                ),
-                timeout=self.config.timeout,
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await result.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self.config.timeout,
+                )
+            except asyncio.TimeoutError:
+                await self._terminate_process(process)
+                return "", "Execution timed out", -1
 
-            return stdout.decode(), stderr.decode(), result.returncode or 0
+            self._touch_activity()
+
+            return stdout.decode(), stderr.decode(), process.returncode or 0
 
         except asyncio.TimeoutError:
             return "", "Execution timed out", -1
@@ -226,9 +246,7 @@ class RLMBridge:
         if not packages:
             return True, ""
 
-        if not self._container_id:
-            if not await self.prewarm():
-                raise DockerNotAvailableError("RLM container not available")
+        await self._ensure_container_ready()
 
         try:
             # Install packages using pip
@@ -245,19 +263,26 @@ class RLMBridge:
 
             logger.info(f"Installing packages in container: {packages}")
 
-            result = await asyncio.wait_for(
-                asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                ),
-                timeout=120,  # 2 minute timeout for package installation
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await result.communicate()
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=120,
+                )
+            except asyncio.TimeoutError:
+                await self._terminate_process(process)
+                return False, "Package installation timed out (120s limit)"
+
+            self._touch_activity()
 
             output = stdout.decode() + stderr.decode()
 
-            if result.returncode == 0:
+            if process.returncode == 0:
                 logger.info(f"Successfully installed packages: {packages}")
                 return True, output
             else:
@@ -305,6 +330,8 @@ class RLMBridge:
             )
 
         # Generate retrieval code that queries PostgreSQL directly
+        safe_query_literal = json.dumps(query)
+
         retrieval_code = f'''
 import json
 import os
@@ -325,7 +352,7 @@ try:
     conn = psycopg2.connect(pg_url)
     cur = conn.cursor()
     
-    query = """{query}"""
+    query = {safe_query_literal}
     query_words = query.lower().split()
     
     results = []
@@ -483,6 +510,54 @@ except Exception as e:
                 self._container_id = None
                 self._prewarmed = False
                 self._packages_installed = False
+                self._last_activity = None
+
+    def _touch_activity(self) -> None:
+        """Record container activity timestamp."""
+        self._last_activity = datetime.now()
+
+    def _is_container_expired(self) -> bool:
+        """Return True if container idle TTL has elapsed."""
+        ttl_seconds = self.config.container_ttl_seconds
+        if ttl_seconds is None or ttl_seconds <= 0:
+            return False
+        if not self._last_activity:
+            return False
+        return (datetime.now() - self._last_activity).total_seconds() > ttl_seconds
+
+    def _get_seccomp_profile_path(self) -> str:
+        """Resolve seccomp profile path for docker run."""
+        if self.config.seccomp_profile_path:
+            return self.config.seccomp_profile_path
+
+        return str(
+            Path(__file__).resolve().parents[1] / "security" / "seccomp" / "default-profile.json"
+        )
+
+    async def _ensure_container_ready(self) -> None:
+        """Ensure a live, non-expired prewarmed container is available."""
+        if self._container_id and self._is_container_expired():
+            logger.info("RLM container TTL expired; recycling container")
+            await self.shutdown()
+            if not await self.prewarm():
+                raise DockerNotAvailableError("RLM container not available")
+            return
+
+        if not self._container_id:
+            if not await self.prewarm():
+                raise DockerNotAvailableError("RLM container not available")
+
+    async def _terminate_process(self, process: asyncio.subprocess.Process) -> None:
+        """Best-effort terminate/kill for timed out subprocesses."""
+        try:
+            process.terminate()
+            await asyncio.wait_for(process.wait(), timeout=2)
+        except Exception:
+            try:
+                process.kill()
+                await process.wait()
+            except Exception:
+                pass
 
     def __del__(self):
         """Cleanup on deletion."""

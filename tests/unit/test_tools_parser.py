@@ -37,3 +37,9 @@ def test_parse_tool_calls_preserves_explicit_implicit_order():
         "print(2)",
         "print(3)",
     ]
+
+
+def test_parse_ignores_xml_style_tool_call_payload():
+    text = "<TOOL_CALL><name>python_exec</name><args><code>print(1)</code></args></TOOL_CALL>"
+    calls = parse_tool_calls(text)
+    assert calls == []

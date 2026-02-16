@@ -64,6 +64,10 @@ class HiveState:
     # Timeline of becoming
     identity_timeline: List[IdentityEvent] = field(default_factory=list)
 
+    # Identity growth metrics/history (mutable self-model evolution only)
+    identity_growth_metrics: Dict[str, object] = field(default_factory=dict)
+    identity_growth_history: List[Dict] = field(default_factory=list)
+
     # Metadata
     version: int = 0
     created_at: datetime = field(default_factory=datetime.now)
@@ -99,6 +103,10 @@ class HiveState:
             summary["coherence"] = self.self_model.coherence
             summary["tone"] = self.self_model.get_tone().value
             summary["identity_events"] = len(self.identity_timeline)
+        if self.identity_growth_metrics:
+            summary["identity_drift_delta"] = self.identity_growth_metrics.get(
+                "last_drift_delta", 0.0
+            )
 
         return summary
 
@@ -123,6 +131,8 @@ class HiveState:
             "identity_kernel": self.identity_kernel.to_dict(),
             "identity_timeline": [e.to_dict() for e in self.identity_timeline],
             "self_model": self.self_model.to_dict(),
+            "identity_growth_metrics": self.identity_growth_metrics,
+            "identity_growth_history": self.identity_growth_history,
         }
 
     def to_prompt_context(self, max_items: int = 20) -> str:
@@ -496,6 +506,8 @@ class HiveState:
             state.identity_timeline = [
                 IdentityEvent.from_dict(e) for e in data["identity_timeline"]
             ]
+        state.identity_growth_metrics = data.get("identity_growth_metrics", {})
+        state.identity_growth_history = data.get("identity_growth_history", [])
 
         return state
 
@@ -546,3 +558,37 @@ class HiveState:
     def get_recent_identity_events(self, count: int = 10) -> List[IdentityEvent]:
         """Get the most recent identity events."""
         return self.identity_timeline[-count:] if self.identity_timeline else []
+
+    def record_identity_growth(
+        self,
+        drift_delta: float,
+        opinions: List[str],
+        contradictions_processed: int,
+        unresolved_contradictions: int,
+    ) -> None:
+        """Record identity growth metrics/history in mutable hive state."""
+        self.identity_growth_metrics = {
+            "last_drift_delta": drift_delta,
+            "last_opinions": opinions,
+            "last_contradictions_processed": contradictions_processed,
+            "last_unresolved_contradictions": unresolved_contradictions,
+            "last_updated": datetime.now().isoformat(),
+        }
+
+        self.identity_growth_history.append(
+            {
+                "drift_delta": drift_delta,
+                "opinions_updated": len(opinions),
+                "contradictions_processed": contradictions_processed,
+                "unresolved_contradictions": unresolved_contradictions,
+                "opinions": opinions,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+
+        if len(self.identity_growth_history) > self.max_history:
+            self.identity_growth_history = self.identity_growth_history[-self.max_history :]
+
+    def get_recent_identity_growth(self, count: int = 10) -> List[Dict]:
+        """Get the most recent identity growth records."""
+        return self.identity_growth_history[-count:] if self.identity_growth_history else []

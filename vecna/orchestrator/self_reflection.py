@@ -18,6 +18,7 @@ import logging
 
 from vecna.core.hive_state import HiveState
 from vecna.core.types import IdentityEvent, IdentityTone
+from vecna.orchestrator.identity_growth import IdentityGrowthEngine
 
 
 logger = logging.getLogger("vecna.self_reflection")
@@ -288,7 +289,11 @@ def append_identity_event(
     return event
 
 
-def reflect(state: HiveState, query: Optional[str] = None) -> Optional[IdentityEvent]:
+def reflect(
+    state: HiveState,
+    query: Optional[str] = None,
+    enable_identity_growth: bool = False,
+) -> Optional[IdentityEvent]:
     """
     Main entry point: run full self-reflection cycle.
 
@@ -298,6 +303,9 @@ def reflect(state: HiveState, query: Optional[str] = None) -> Optional[IdentityE
     """
     # Update self-model
     significant_change = update_self_model(state, query)
+
+    if enable_identity_growth:
+        IdentityGrowthEngine().run(state)
 
     if not significant_change:
         return None

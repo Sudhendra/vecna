@@ -17,6 +17,8 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 import json
 
+from vecna.memory.patterns import SessionPatternDetector
+
 logger = logging.getLogger("vecna.memory.dream_loop")
 
 if TYPE_CHECKING:
@@ -117,11 +119,9 @@ class DreamLoop:
             decayed = self._decay_memories(dry_run)
             result.memories_decayed = decayed
 
-            # Phase 4: Generate insights (cross-reference)
-            # This is more advanced and requires LLM
-            if self.summarizer:
-                insights = self._generate_insights(dry_run)
-                result.insights_generated = insights
+            # Phase 4: Generate insights from recurring patterns and related memories
+            insights = self._generate_insights(dry_run)
+            result.insights_generated = insights
 
         except Exception as e:
             logger.error(f"Dream loop error: {e}")
@@ -447,18 +447,85 @@ Summary:"""
         return decayed
 
     def _generate_insights(self, dry_run: bool) -> int:
-        """Generate new insights by cross-referencing memories (requires LLM)."""
-        if not self.summarizer or not self.pg_store:
+        """Generate new insights by cross-referencing recurring themes and memories."""
+        if not self.pg_store:
             return 0
 
-        # This is a placeholder for more sophisticated insight generation
-        # Ideas:
-        # 1. Find clusters of related memories and synthesize
-        # 2. Identify contradictions and try to resolve
-        # 3. Look for patterns across episodes
-        # 4. Generate hypotheses from accumulated facts
+        try:
+            get_events = getattr(self.pg_store, "get_recent_events", None)
+            if not callable(get_events):
+                return 0
 
-        return 0
+            events = get_events(limit=200)
+            detector = SessionPatternDetector(
+                min_count=2,
+                max_patterns=5,
+                exclude_event_types={"dream_loop"},
+            )
+            pattern_result = detector.detect(events)
+            patterns = pattern_result.get("patterns", [])
+            if not patterns:
+                return 0
+
+            generated = 0
+            add_item = getattr(self.pg_store, "add_item", None)
+            search = getattr(self.pg_store, "search", None)
+
+            for pattern in patterns:
+                theme = pattern.get("theme", "")
+                if not theme:
+                    continue
+
+                related_count = 0
+                if callable(search):
+                    try:
+                        related = search(theme, top_k=3)
+                        related_count = len(related or [])
+                    except Exception:
+                        related_count = 0
+
+                base_text = (
+                    f"Recurring theme '{theme}' appears {pattern.get('count', 0)} times "
+                    f"({pattern.get('frequency', 0):.2f} of recent events) with "
+                    f"{related_count} related memories."
+                )
+
+                insight_text = base_text
+                if self.summarizer:
+                    prompt = f"Convert this memory signal into one concise insight: {base_text}"
+                    try:
+                        insight_text = self.summarizer(prompt)
+                    except Exception as e:
+                        logger.error(f"Insight summarization failed for theme '{theme}': {e}")
+
+                if dry_run:
+                    generated += 1
+                    continue
+
+                if not callable(add_item):
+                    continue
+
+                from vecna.memory.pg_store import MemoryItem
+
+                item = MemoryItem(
+                    content=str(insight_text),
+                    item_type="hypothesis",
+                    confidence=0.6,
+                    domain="meta",
+                    metadata={
+                        "source": "dream_loop",
+                        "theme": theme,
+                        "pattern_count": pattern.get("count", 0),
+                    },
+                )
+                add_result = add_item(item)
+                if add_result:
+                    generated += 1
+
+            return generated
+        except Exception as e:
+            logger.error(f"Insight generation error: {e}")
+            return 0
 
     def _record_dream_event(self, result: DreamResult) -> None:
         """Record the dream loop execution as an event."""

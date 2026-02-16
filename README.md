@@ -201,6 +201,15 @@ vecna                    # Start interactive chat
 vecna chat               # Same as above
 vecna speak "query"      # One-shot query
 
+# Autonomy heartbeat
+vecna heartbeat tick     # Run one bounded autonomy tick
+vecna heartbeat tick --max-goals 5 --queue-path ~/.vecna/autonomy_queue.jsonl
+
+# Tool approvals
+vecna tools pending      # List pending approvals
+vecna tools approve <request_id>
+vecna tools deny <request_id>
+
 # Authentication
 vecna auth login         # GitHub Copilot OAuth flow
 vecna auth status        # Check authentication
@@ -355,6 +364,12 @@ pip install ".[docs]"
 mkdocs serve  # Local preview at http://localhost:8000
 mkdocs build  # Build to site/
 ```
+
+New operational docs for recently added safety and autonomy systems:
+
+- `docs/operations/autonomy-heartbeat.md` - heartbeat tick usage and cron examples
+- `docs/security/tooling-hardening.md` - seccomp, container TTL, and redaction knobs
+- `docs/observability/safety-regressions.md` - safety regression suite overview and commands
 
 ## Development
 

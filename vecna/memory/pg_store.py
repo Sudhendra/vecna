@@ -13,10 +13,13 @@ Designed for the Vecna hive mind substrate.
 from typing import List, Dict, Optional, Tuple, Any, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections import Counter
 import json
 import hashlib
 import os
 import logging
+import math
+import re
 
 import numpy as np
 
@@ -633,6 +636,52 @@ class PgMemoryStore:
     # SEMANTIC SEARCH
     # ============================================================
 
+    def _tokenize(self, text: str) -> List[str]:
+        """Tokenize text into lowercase alphanumeric terms."""
+        if not text:
+            return []
+        return re.findall(r"[a-z0-9]+", text.lower())
+
+    def _bm25_score(
+        self,
+        query_tokens: List[str],
+        document_tokens: List[str],
+        corpus_tokens: List[List[str]],
+        k1: float = 1.5,
+        b: float = 0.75,
+    ) -> float:
+        """Compute BM25 score for one document against a tokenized corpus."""
+        if not query_tokens or not document_tokens or not corpus_tokens:
+            return 0.0
+
+        doc_length = len(document_tokens)
+        if doc_length == 0:
+            return 0.0
+
+        avg_doc_length = sum(len(tokens) for tokens in corpus_tokens) / len(corpus_tokens)
+        if avg_doc_length <= 0:
+            return 0.0
+
+        tf = Counter(document_tokens)
+        query_terms = set(query_tokens)
+        num_docs = len(corpus_tokens)
+
+        score = 0.0
+        for term in query_terms:
+            term_frequency = tf.get(term, 0)
+            if term_frequency == 0:
+                continue
+
+            doc_frequency = sum(1 for tokens in corpus_tokens if term in tokens)
+            idf = math.log(1.0 + ((num_docs - doc_frequency + 0.5) / (doc_frequency + 0.5)))
+
+            numerator = term_frequency * (k1 + 1.0)
+            denominator = term_frequency + k1 * (1.0 - b + b * (doc_length / avg_doc_length))
+            if denominator > 0:
+                score += idf * (numerator / denominator)
+
+        return score
+
     def search(
         self,
         query: str,
@@ -678,37 +727,47 @@ class PgMemoryStore:
             has_text_tokens = any(ch.isalnum() for ch in query)
 
             if hybrid and has_text_tokens:
+                candidate_limit = max(top_k * 5, top_k)
                 query_sql = f"""
-                    WITH vector_scores AS (
+                    WITH vector_candidates AS (
                         SELECT id, 1 - (embedding <=> %s::vector) AS vec_score
                         FROM memory_items
                         WHERE {" AND ".join(where_clauses)}
                         AND 1 - (embedding <=> %s::vector) > %s
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT %s
                     ),
-                    text_scores AS (
-                        SELECT id, ts_rank_cd(search_vector,
-                            plainto_tsquery('english', %s)) AS text_score
+                    text_candidates AS (
+                        SELECT
+                            id,
+                            ts_rank_cd(search_vector, plainto_tsquery('english', %s)) AS text_rank
                         FROM memory_items
-                        WHERE search_vector @@ plainto_tsquery('english', %s)
+                        WHERE {" AND ".join(where_clauses)}
+                        AND search_vector @@ plainto_tsquery('english', %s)
+                        ORDER BY text_rank DESC
+                        LIMIT %s
+                    ),
+                    candidate_ids AS (
+                        SELECT id FROM vector_candidates
+                        UNION
+                        SELECT id FROM text_candidates
                     )
                     SELECT m.id, m.content, m.item_type, m.confidence, m.domain, m.source_model,
                            m.embedding, m.metadata, m.retrieval_count, m.last_retrieved_at,
                            m.created_at, m.updated_at,
-                           COALESCE(v.vec_score, 0) * %s + COALESCE(t.text_score, 0) * %s
-                           AS similarity
+                           COALESCE(v.vec_score, 0) AS vec_score
+                           -- text_rank is used in candidate generation above; final ranking is BM25 rerank in Python
                     FROM memory_items m
-                    LEFT JOIN vector_scores v ON m.id = v.id
-                    LEFT JOIN text_scores t ON m.id = t.id
-                    WHERE v.id IS NOT NULL OR t.id IS NOT NULL
-                    ORDER BY similarity DESC
-                    LIMIT %s
+                    JOIN candidate_ids c ON m.id = c.id
+                    LEFT JOIN vector_candidates v ON m.id = v.id
                 """
 
                 final_params = (
                     [query_vector]
                     + filter_params
-                    + [query_vector, min_vector_score]
-                    + [query, query, vector_weight, text_weight, top_k]
+                    + [query_vector, min_vector_score, query_vector, candidate_limit]
+                    + filter_params
+                    + [query, query, candidate_limit]
                 )
             else:
                 query_sql = f"""
@@ -729,11 +788,32 @@ class PgMemoryStore:
 
             # Update retrieval counts
             if rows:
+                if hybrid and has_text_tokens:
+                    query_tokens = self._tokenize(query)
+                    corpus_tokens = [self._tokenize(row[1]) for row in rows]
+
+                    rescored_rows = []
+                    for row, doc_tokens in zip(rows, corpus_tokens):
+                        vector_score = float(row[12] or 0.0)
+                        bm25_score = self._bm25_score(query_tokens, doc_tokens, corpus_tokens)
+                        combined_score = (vector_weight * vector_score) + (text_weight * bm25_score)
+                        rescored_rows.append((row, combined_score))
+
+                    rescored_rows.sort(key=lambda item: item[1], reverse=True)
+                    rescored_rows = rescored_rows[:top_k]
+                    rows = [item[0] for item in rescored_rows]
+                    similarities = [item[1] for item in rescored_rows]
+                else:
+                    rows = rows[:top_k]
+                    similarities = [float(row[12] or 0.0) for row in rows]
+
                 item_ids = [str(row[0]) for row in rows]
                 self._update_retrieval_stats(item_ids)
+            else:
+                similarities = []
 
             results = []
-            for row in rows:
+            for row, similarity in zip(rows, similarities):
                 item = MemoryItem(
                     id=str(row[0]),
                     content=row[1],
@@ -748,7 +828,6 @@ class PgMemoryStore:
                     created_at=row[10],
                     updated_at=row[11],
                 )
-                similarity = row[12]
                 results.append((item, similarity))
 
             return results
@@ -915,35 +994,94 @@ class PgMemoryStore:
 
         Returns list of (item, path_weight, path) tuples.
         """
+        if max_depth < 1:
+            return []
+
         conn = self._get_connection()
 
         try:
-            # For now, simple 1-hop traversal
-            # TODO: Implement recursive CTE for deeper traversal
-
-            where_clause = "source_id = %s OR target_id = %s"
-            params = [item_id, item_id]
-
-            if relation:
-                where_clause = f"({where_clause}) AND relation = %s"
-                params.append(relation)
+            relation_filter = "AND me.relation = %(relation)s" if relation else ""
+            relation_filter_recursive = "AND me.relation = %(relation)s" if relation else ""
 
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
+                    WITH RECURSIVE traversal AS (
+                        SELECT
+                            CASE
+                                WHEN me.source_id = %(start_id)s::uuid THEN me.target_id
+                                ELSE me.source_id
+                            END AS node_id,
+                            ARRAY[
+                                %(start_id)s::uuid,
+                                CASE
+                                    WHEN me.source_id = %(start_id)s::uuid THEN me.target_id
+                                    ELSE me.source_id
+                                END
+                            ]::uuid[] AS visited_nodes,
+                            ARRAY[
+                                %(start_text)s::text,
+                                me.relation::text,
+                                (
+                                    CASE
+                                        WHEN me.source_id = %(start_id)s::uuid THEN me.target_id
+                                        ELSE me.source_id
+                                    END
+                                )::text
+                            ]::text[] AS path,
+                            me.weight::double precision AS path_weight,
+                            1 AS depth
+                        FROM memory_edges me
+                        WHERE (me.source_id = %(start_id)s::uuid OR me.target_id = %(start_id)s::uuid)
+                        {relation_filter}
+
+                        UNION ALL
+
+                        SELECT
+                            CASE
+                                WHEN me.source_id = t.node_id THEN me.target_id
+                                ELSE me.source_id
+                            END AS node_id,
+                            t.visited_nodes || (
+                                CASE
+                                    WHEN me.source_id = t.node_id THEN me.target_id
+                                    ELSE me.source_id
+                                END
+                            ),
+                            t.path || me.relation::text || (
+                                CASE
+                                    WHEN me.source_id = t.node_id THEN me.target_id
+                                    ELSE me.source_id
+                                END
+                            )::text,
+                            t.path_weight * me.weight::double precision AS path_weight,
+                            t.depth + 1 AS depth
+                        FROM traversal t
+                        JOIN memory_edges me ON (me.source_id = t.node_id OR me.target_id = t.node_id)
+                        WHERE t.depth < %(max_depth)s
+                        AND NOT (
+                            CASE
+                                WHEN me.source_id = t.node_id THEN me.target_id
+                                ELSE me.source_id
+                            END = ANY(t.visited_nodes)
+                        )
+                        {relation_filter_recursive}
+                    )
                     SELECT DISTINCT ON (mi.id)
                         mi.id, mi.content, mi.item_type, mi.confidence, mi.domain,
                         mi.source_model, mi.embedding, mi.metadata, mi.retrieval_count,
                         mi.last_retrieved_at, mi.created_at, mi.updated_at,
-                        me.weight, me.relation
-                    FROM memory_edges me
-                    JOIN memory_items mi ON (
-                        (me.source_id = %s AND me.target_id = mi.id) OR
-                        (me.target_id = %s AND me.source_id = mi.id)
-                    )
-                    WHERE {where_clause}
+                        traversal.path_weight, traversal.path
+                    FROM traversal
+                    JOIN memory_items mi ON mi.id = traversal.node_id
+                    ORDER BY mi.id, traversal.depth ASC, traversal.path_weight DESC
                 """,
-                    [item_id, item_id] + params,
+                    {
+                        "start_id": item_id,
+                        "start_text": item_id,
+                        "max_depth": max_depth,
+                        "relation": relation,
+                    },
                 )
 
                 rows = cur.fetchall()
@@ -964,9 +1102,8 @@ class PgMemoryStore:
                     created_at=row[10],
                     updated_at=row[11],
                 )
-                weight = row[12]
-                relation_type = row[13]
-                path = [item_id, relation_type, str(row[0])]
+                weight = float(row[12] or 0.0)
+                path = list(row[13] or [])
                 results.append((item, weight, path))
 
             return results

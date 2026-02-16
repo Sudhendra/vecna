@@ -1,8 +1,12 @@
 """Unit tests for ReWOO execution helpers."""
 
+from typing import Any, Dict
+
 import pytest
 
 from vecna.orchestrator.rewoo import (
+    RewooEngine,
+    RewooEngineConfig,
     execute_rewoo_plan,
     parse_rewoo_plan,
     render_step_input,
@@ -47,7 +51,7 @@ def _build_runtime(policy: ToolPolicy | None = None) -> ToolRuntime:
 
 
 def _build_runtime_with_executors(
-    executors: dict[str, object], policy: ToolPolicy | None = None
+    executors: Dict[str, Any], policy: ToolPolicy | None = None
 ) -> ToolRuntime:
     registry = ToolRegistry()
     for tool_name, executor in executors.items():
@@ -158,6 +162,36 @@ Final: done
 
 
 @pytest.mark.asyncio
+async def test_rewoo_policy_denied_can_abort_plan():
+    policy = ToolPolicy(risk_actions={})
+    runtime = _build_runtime_with_executors(
+        {
+            "echo": lambda args, ctx: ToolResult("echo", True, args["text"]),
+        },
+        policy=policy,
+    )
+    plan = parse_rewoo_plan(
+        """Plan: abort on policy denial
+E1: echo[{"text":"blocked"}]
+E2: echo[{"text":"should-not-run"}]
+Final: done
+"""
+    )
+
+    execution = await execute_rewoo_plan(
+        plan,
+        runtime,
+        ToolExecutionContext(),
+        policy_denied_behavior="abort_plan",
+    )
+
+    assert [result.step_id for result in execution.results] == ["E1", "E2"]
+    assert [result.status for result in execution.results] == ["failed", "skipped"]
+    assert execution.results[0].error == "denied by policy"
+    assert execution.results[1].error == "skipped due to policy denial"
+
+
+@pytest.mark.asyncio
 async def test_execute_rewoo_plan_stops_after_two_consecutive_failures():
     calls = {"echo": 0}
 
@@ -184,6 +218,49 @@ Final: done
     assert [result.status for result in execution.results] == ["failed", "failed", "skipped"]
     assert execution.results[2].status_history == ["pending", "skipped"]
     assert calls["echo"] == 0
+
+
+@pytest.mark.asyncio
+async def test_rewoo_can_use_separate_synthesizer_adapter():
+    class _PlannerAdapter:
+        async def generate(self, prompt):
+            if "strict ReWOO plan" in prompt:
+                return """Plan: use echo
+E1: echo[{"text":"ok"}]
+Final: Use #E1
+"""
+            return "planner-synthesis"
+
+    class _SynthesizerAdapter:
+        async def generate(self, prompt):
+            return "synthesized-with-separate-adapter"
+
+    runtime = _build_runtime_with_executors(
+        {
+            "echo": lambda args, ctx: ToolResult("echo", True, args["text"]),
+        }
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="echo", description="echo", input_schema={"text": "string"}),
+        executor=lambda args, ctx: ToolResult("echo", True, args["text"]),
+    )
+    engine = RewooEngine(
+        runtime=runtime,
+        registry=registry,
+        planner_adapter=_PlannerAdapter(),
+        synthesizer_adapter=_SynthesizerAdapter(),
+        config=RewooEngineConfig(),
+    )
+
+    from vecna.core.hive_state import HiveState
+
+    state = HiveState()
+    state.ensure_identity()
+    result = await engine.run("complex task", state, ToolExecutionContext())
+
+    assert result.used_rewoo is True
+    assert result.answer == "synthesized-with-separate-adapter"
 
 
 @pytest.mark.asyncio
@@ -255,3 +332,42 @@ Final: Use #E1
     assert execution.results[0].tool_result is not None
     assert execution.results[0].tool_result.metadata["artifact_truncated"] is True
     assert execution.results[0].tool_result.metadata["full_output"] == long_output
+
+
+def test_build_planner_prompt_requires_json_object_inputs():
+    registry = ToolRegistry()
+    runtime = _build_runtime_with_executors(
+        {"echo": lambda args, ctx: ToolResult("echo", True, "ok")}
+    )
+    engine = RewooEngine(runtime=runtime, registry=registry)
+
+    from vecna.core.hive_state import HiveState
+
+    state = HiveState()
+    state.ensure_identity()
+    prompt = engine._build_planner_prompt("find docs", state, ["web_search"])
+
+    assert "<input> must be valid JSON object" in prompt
+    assert "#E1 must appear only inside JSON string values" in prompt
+
+
+def test_validate_plan_rejects_non_object_json_step_inputs():
+    runtime = _build_runtime_with_executors(
+        {"echo": lambda args, ctx: ToolResult("echo", True, "ok")}
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="echo", description="echo", input_schema={"text": "string"}),
+        executor=lambda args, ctx: ToolResult("echo", True, args["text"]),
+    )
+    engine = RewooEngine(runtime=runtime, registry=registry)
+
+    plan = parse_rewoo_plan(
+        """Plan: invalid input type
+E1: echo["raw string"]
+Final: done
+"""
+    )
+
+    with pytest.raises(ValueError, match="must be an object"):
+        engine.validate_plan(plan, registry)
