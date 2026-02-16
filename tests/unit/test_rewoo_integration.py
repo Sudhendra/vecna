@@ -4,6 +4,7 @@ import asyncio
 
 from vecna.core.types import HiveUpdate
 from vecna.orchestrator.loop import HiveConfig, HiveLoop
+from vecna.orchestrator.rewoo import RewooExecutionResult
 from vecna.tools.permissions import ToolPermissionManager, ToolPolicy
 from vecna.tools.registry import ToolRegistry
 from vecna.tools.runtime import ToolRuntime
@@ -265,3 +266,51 @@ def test_rewoo_artifact_injection_mode_per_step_updates_memory_summary(monkeypat
 
     assert "Task: complex task" in response
     assert "[REWOO_ARTIFACT] E1: ok" in loop.state.memory_summary
+
+
+def test_rewoo_engine_receives_allowed_fs_roots_in_tool_context(monkeypatch):
+    config = HiveConfig(
+        use_pg_memory=False,
+        use_semantic_memory=False,
+        auto_execute_tools=False,
+        auto_execute_code=False,
+        verbose=False,
+        enable_rewoo_planning=True,
+        rewoo_force=True,
+        tool_allowed_fs_roots=["~/sandbox", "/tmp/work"],
+    )
+    loop = HiveLoop(config=config, adapters=[_DummyAdapter()])
+
+    captured = {}
+
+    class _FakeEngine:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def run(self, task, state, context):
+            captured["task"] = task
+            captured["session_id"] = context.session_id
+            captured["allowed_fs_roots"] = list(context.allowed_fs_roots)
+            return RewooExecutionResult(
+                answer="",
+                execution=None,
+                used_rewoo=False,
+                fallback_reason="intentional fallback",
+            )
+
+    async def fake_ensure_session_manager(initial_query=None):
+        return None
+
+    async def fake_run_cycle(task):
+        return ["legacy-fallback"], [HiveUpdate(source_model="dummy")]
+
+    monkeypatch.setattr("vecna.orchestrator.loop.RewooEngine", _FakeEngine)
+    monkeypatch.setattr(loop, "_ensure_session_manager", fake_ensure_session_manager)
+    monkeypatch.setattr(loop, "_run_cycle", fake_run_cycle)
+
+    response = asyncio.run(loop.think("use planning"))
+
+    assert response == "legacy-fallback"
+    assert captured["task"] == "use planning"
+    assert captured["session_id"]
+    assert captured["allowed_fs_roots"] == ["~/sandbox", "/tmp/work"]

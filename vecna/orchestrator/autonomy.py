@@ -58,6 +58,7 @@ class AutonomyLoop(HiveLoop):
             max_retries = self._extract_max_retries(item)
             attempt = 0
             stop_requested = False
+            terminal_error: Optional[str] = None
 
             while True:
                 if self._kill_switch_is_active():
@@ -68,9 +69,10 @@ class AutonomyLoop(HiveLoop):
                     result = await self._run_goal(goal, max_cycles=max_cycles)
                     results.append(result)
                     self._mark_completed(goal_queue, goal_id)
+                    terminal_error = None
                     break
                 except Exception as exc:
-                    self._mark_failed(goal_queue, goal_id, str(exc))
+                    terminal_error = str(exc)
                     if attempt >= max_retries:
                         break
                     if self._kill_switch_is_active():
@@ -78,6 +80,9 @@ class AutonomyLoop(HiveLoop):
                         break
                     await asyncio.sleep(self.backoff.delay_for_attempt(attempt))
                     attempt += 1
+
+            if terminal_error is not None:
+                self._mark_failed(goal_queue, goal_id, terminal_error)
 
             if stop_requested:
                 break

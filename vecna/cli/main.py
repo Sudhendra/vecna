@@ -209,6 +209,11 @@ def get_hive(use_config: bool = True):
                 rewoo_use_separate_synthesizer=vecna_config.rewoo_use_separate_synthesizer,
                 rewoo_min_task_words=vecna_config.rewoo_min_task_words,
                 rewoo_force=vecna_config.rewoo_force,
+                enable_web_tools=vecna_config.enable_web_tools,
+                enable_fs_tools=vecna_config.enable_fs_tools,
+                tool_quota_per_session=vecna_config.tool_quota_per_session,
+                tool_quota_per_tool=vecna_config.tool_quota_per_tool,
+                tool_allowed_fs_roots=list(vecna_config.tool_allowed_fs_roots),
             )
 
             hive = HiveMind(hive_config)
@@ -1332,6 +1337,8 @@ def heartbeat_tick(max_goals: int, queue_path: Optional[str]):
     from vecna.orchestrator.goal_queue import GoalQueue
     from vecna.orchestrator.heartbeat import HeartbeatConfig, HeartbeatRunner
 
+    hive = get_hive()
+
     resolved_queue_path = (
         Path(queue_path).expanduser()
         if queue_path
@@ -1339,7 +1346,9 @@ def heartbeat_tick(max_goals: int, queue_path: Optional[str]):
     )
     queue = GoalQueue(path=resolved_queue_path)
     runner = HeartbeatRunner(
-        autonomy_loop=AutonomyLoop(),
+        autonomy_loop=AutonomyLoop(
+            config=hive.loop.config, adapters=hive.loop.adapters, name="explorer"
+        ),
         goal_queue=queue,
         config=HeartbeatConfig(max_goals_per_tick=max_goals),
     )

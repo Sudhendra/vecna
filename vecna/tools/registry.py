@@ -33,7 +33,10 @@ class ToolRegistry:
         return [rt.spec for rt in self._tools.values()]
 
 
-def get_default_registry() -> ToolRegistry:
+def get_default_registry(
+    enable_web_tools: bool = True,
+    enable_fs_tools: bool = True,
+) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -59,40 +62,43 @@ def get_default_registry() -> ToolRegistry:
         ),
         executor=lambda args, ctx: ToolResult("memory_get", True, memory_get(**args)),
     )
-    registry.register(
-        ToolSpec(
-            name="http_request",
-            description="Fetch web content over HTTP/HTTPS with safety controls.",
-            input_schema={"url": "string"},
-            tags=["web", "http", "fetch"],
-        ),
-        executor=http_request_executor,
-    )
-    registry.register(
-        ToolSpec(
-            name="web_search",
-            description="Search the web and return ranked results.",
-            input_schema={"query": "string", "max_results": "int"},
-            tags=["web", "search"],
-        ),
-        executor=web_search_executor,
-    )
-    registry.register(
-        ToolSpec(
-            name="fs_read",
-            description="Read file contents from allowed filesystem roots.",
-            input_schema={"path": "string"},
-            tags=["filesystem", "read"],
-        ),
-        executor=fs_read_executor,
-    )
-    registry.register(
-        ToolSpec(
-            name="fs_list",
-            description="List directory entries from allowed filesystem roots.",
-            input_schema={"path": "string"},
-            tags=["filesystem", "list"],
-        ),
-        executor=fs_list_executor,
-    )
+    if enable_web_tools:
+        registry.register(
+            ToolSpec(
+                name="http_request",
+                description="Fetch web content over HTTP/HTTPS with safety controls.",
+                input_schema={"url": "string"},
+                tags=["web", "http", "fetch"],
+            ),
+            executor=http_request_executor,
+        )
+        registry.register(
+            ToolSpec(
+                name="web_search",
+                description="Search the web and return ranked results.",
+                input_schema={"query": "string", "max_results": "int"},
+                tags=["web", "search"],
+            ),
+            executor=web_search_executor,
+        )
+
+    if enable_fs_tools:
+        registry.register(
+            ToolSpec(
+                name="fs_read",
+                description="Read file contents from allowed filesystem roots.",
+                input_schema={"path": "string"},
+                tags=["filesystem", "read"],
+            ),
+            executor=fs_read_executor,
+        )
+        registry.register(
+            ToolSpec(
+                name="fs_list",
+                description="List directory entries from allowed filesystem roots.",
+                input_schema={"path": "string"},
+                tags=["filesystem", "list"],
+            ),
+            executor=fs_list_executor,
+        )
     return registry

@@ -31,6 +31,7 @@ class HeartbeatRunner:
             "goals_failed": 0,
             "goals_skipped": 0,
         }
+        attempted_goal_ids = set()
 
         for _ in range(summary["max_goals_per_tick"]):
             item = self.goal_queue.pop()
@@ -47,7 +48,13 @@ class HeartbeatRunner:
             if isinstance(item, dict):
                 goal_id = str(item.get("goal_id", "")).strip()
 
+            if goal_id and goal_id in attempted_goal_ids:
+                summary["goals_skipped"] += 1
+                continue
+
             try:
+                if goal_id:
+                    attempted_goal_ids.add(goal_id)
                 summary["goals_executed"] += 1
                 await self.autonomy_loop._run_goal(goal)
                 summary["goals_completed"] += 1

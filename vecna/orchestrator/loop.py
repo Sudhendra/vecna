@@ -34,6 +34,7 @@ from vecna.tools.code_executor import execute_and_inject
 from vecna.tools.registry import get_default_registry
 from vecna.tools.permissions import ToolPermissionManager, ToolPolicy
 from vecna.tools.runtime import ToolRuntime, RuntimeConfig
+from vecna.tools.quotas import QuotaConfig, ToolQuotaManager
 from vecna.tools.types import ToolExecutionContext
 
 
@@ -148,6 +149,13 @@ class HiveConfig:
     rewoo_min_task_words: int = 8
     rewoo_force: bool = False
 
+    # Tooling feature flags and quotas
+    enable_web_tools: bool = False
+    enable_fs_tools: bool = False
+    tool_quota_per_session: int = 0
+    tool_quota_per_tool: int = 0
+    tool_allowed_fs_roots: List[str] = field(default_factory=lambda: ["~/.vecna"])
+
 
 class HiveLoop:
     """
@@ -200,11 +208,23 @@ class HiveLoop:
         # Tool runtime
         auto_execute_tools = self.config.auto_execute_tools
         tool_policy = self.config.tool_policy
-        self.tool_registry = get_default_registry()
+        self.tool_registry = get_default_registry(
+            enable_web_tools=self.config.enable_web_tools,
+            enable_fs_tools=self.config.enable_fs_tools,
+        )
         self.tool_permissions = ToolPermissionManager(tool_policy)
+        tool_quota_manager = None
+        if self.config.tool_quota_per_session > 0 or self.config.tool_quota_per_tool > 0:
+            tool_quota_manager = ToolQuotaManager(
+                QuotaConfig(
+                    per_session=self.config.tool_quota_per_session,
+                    per_tool=self.config.tool_quota_per_tool,
+                )
+            )
         self.tool_runtime = ToolRuntime(
             registry=self.tool_registry,
             permission_manager=self.tool_permissions,
+            quota_manager=tool_quota_manager,
             config=RuntimeConfig(auto_execute_tools=auto_execute_tools),
         )
 
@@ -414,7 +434,9 @@ class HiveLoop:
                                             tool_results,
                                         ) = await self.tool_runtime.execute_calls(
                                             final_response,
-                                            ToolExecutionContext(session_id=session_id),
+                                            self._build_tool_execution_context(
+                                                session_id=session_id
+                                            ),
                                         )
                                         span.set_metadata(
                                             {
@@ -434,7 +456,7 @@ class HiveLoop:
                                         tool_results,
                                     ) = await self.tool_runtime.execute_calls(
                                         final_response,
-                                        ToolExecutionContext(session_id=session_id),
+                                        self._build_tool_execution_context(session_id=session_id),
                                     )
                                     if tool_results and self.config.verbose:
                                         logger.info(f"Executed {len(tool_results)} tool call(s)")
@@ -733,7 +755,11 @@ class HiveLoop:
                 artifact_injection_mode=self.config.rewoo_artifact_injection_mode,
             ),
         )
-        result = await engine.run(task, self.state, ToolExecutionContext(session_id=session_id))
+        result = await engine.run(
+            task,
+            self.state,
+            self._build_tool_execution_context(session_id=session_id),
+        )
         if (
             result.used_rewoo
             and result.execution is not None
@@ -895,7 +921,7 @@ class HiveLoop:
             if response and self.config.auto_execute_tools and self.tool_runtime:
                 try:
                     response, _ = await self.tool_runtime.execute_calls(
-                        response, ToolExecutionContext()
+                        response, self._build_tool_execution_context(session_id=None)
                     )
                 except Exception as e:
                     logger.warning(f"Tool execution failed: {e}")
@@ -919,6 +945,12 @@ class HiveLoop:
     def get_state(self) -> HiveState:
         """Get current hive state."""
         return self.state
+
+    def _build_tool_execution_context(self, session_id: Optional[str]) -> ToolExecutionContext:
+        return ToolExecutionContext(
+            session_id=session_id,
+            allowed_fs_roots=list(self.config.tool_allowed_fs_roots),
+        )
 
     def save_state(self, filepath: Optional[str] = None) -> None:
         """

@@ -92,7 +92,35 @@ async def test_autonomy_loop_processes_queue_formats_and_handles_failures(monkey
     assert results == ["done:first", "done:from-pg"]
     assert calls == ["first", "from-pg", "from-pg", "from-pg"]
     assert queue.mark_completed_calls == ["g1", "g2"]
-    assert queue.mark_failed_calls == [("g2", "transient-1"), ("g2", "transient-2")]
+    assert queue.mark_failed_calls == []
+    assert sleep_delays == [0.25, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_autonomy_loop_marks_failed_once_when_retry_budget_exhausted(monkeypatch):
+    queue = _MemoryQueue(items=[{"goal_id": "g1", "goal": "flaky", "max_retries": 2}])
+    loop = AutonomyLoop(backoff=BackoffConfig(base_seconds=0.25, max_seconds=1.0, multiplier=2.0))
+
+    calls: List[str] = []
+
+    async def fake_think(task, max_cycles=None):
+        calls.append(task)
+        raise RuntimeError(f"transient-{len(calls)}")
+
+    sleep_delays: List[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    loop.think = fake_think
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    results = await loop.run(queue)
+
+    assert results == []
+    assert calls == ["flaky", "flaky", "flaky"]
+    assert queue.mark_completed_calls == []
+    assert queue.mark_failed_calls == [("g1", "transient-3")]
     assert sleep_delays == [0.25, 0.5]
 
 

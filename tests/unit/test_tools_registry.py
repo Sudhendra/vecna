@@ -29,3 +29,16 @@ def test_default_registry_includes_new_tools():
     assert specs_by_name["web_search"].tags == ["web", "search"]
     assert specs_by_name["fs_read"].tags == ["filesystem", "read"]
     assert specs_by_name["fs_list"].tags == ["filesystem", "list"]
+
+
+def test_default_registry_can_disable_web_and_fs_tools():
+    registry = get_default_registry(enable_web_tools=False, enable_fs_tools=False)
+    names = {spec.name for spec in registry.list_tools()}
+
+    assert "python_exec" in names
+    assert "memory_search" in names
+    assert "memory_get" in names
+    assert "http_request" not in names
+    assert "web_search" not in names
+    assert "fs_read" not in names
+    assert "fs_list" not in names
