@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VECNA — Virtual Emergent Collective Neural Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root{
+  --bg:#020204;--bg2:#080810;--bg3:#0c0c18;
+  --border:rgba(220,20,60,0.06);--border2:rgba(220,20,60,0.1);
+  --t1:#f0e8ea;--t2:#8a7580;--t3:#4a3840;
+  --red:#DC143C;--red2:#ff1a4a;--blood:#8B0000;--crimson:#CC0000;
+  --glo:rgba(220,20,60,0.06);--gvlo:rgba(220,20,60,0.03);
+  --purple:#4B0082;--violet:#8B008B;
+  --grad:linear-gradient(135deg,#e8dde5 0%,#DC143C 50%,#8B0000 100%);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--t1);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+::selection{background:rgba(220,20,60,0.25)}
+.G{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;height:56px;padding:0 3rem;display:flex;align-items:center;justify-content:space-between;backdrop-filter:blur(24px) saturate(1.3);background:rgba(2,2,4,0.85);border-bottom:1px solid var(--border)}
+.logo{display:flex;align-items:center;gap:.6rem;text-decoration:none;cursor:pointer}
+.logo-glyph{font-size:1.3rem;color:var(--red);filter:drop-shadow(0 0 6px rgba(220,20,60,0.4))}
+.logo-t{font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;letter-spacing:.08em}
+.logo-t .d{opacity:.3;font-weight:500;font-size:.75rem;letter-spacing:.12em}
+.nav-c{display:flex;align-items:center;gap:0}
+.nav-c a{font-size:.78rem;font-weight:500;color:var(--t2);text-decoration:none;padding:.45rem 1rem;border-radius:6px;transition:all .2s}
+.nav-c a:hover,.nav-c a.active{color:var(--t1);background:rgba(220,20,60,.04)}
+.nav-cta{font-size:.72rem;font-weight:600;padding:.45rem 1.2rem;background:var(--red);color:var(--bg);border:none;border-radius:6px;cursor:pointer;transition:all .25s;text-decoration:none;margin-left:.8rem;letter-spacing:.04em}
+.nav-cta:hover{box-shadow:0 0 24px rgba(220,20,60,.25);background:var(--red2)}
+
+/* PAGE SYSTEM */
+.page{display:none;min-height:100vh;padding-top:56px}
+.page.active{display:block}
+
+/* SHARED */
+.container{max-width:1100px;margin:0 auto;padding:0 3rem}
+.sec{padding:5.5rem 0}
+.divider{height:1px;background:var(--border);max-width:1100px;margin:0 auto}
+.slabel{font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:500;letter-spacing:.22em;text-transform:uppercase;color:var(--red);margin-bottom:.6rem;opacity:.7}
+.stitle{font-family:'Syne',sans-serif;font-size:clamp(1.7rem,3.2vw,2.5rem);font-weight:700;letter-spacing:-.03em;margin-bottom:.6rem}
+.ssub{font-size:.9rem;font-weight:400;color:var(--t2);max-width:480px;line-height:1.7}
+.btn-p{display:inline-block;font-size:.78rem;font-weight:600;padding:.65rem 1.6rem;background:var(--red);color:var(--bg);border:none;border-radius:6px;cursor:pointer;transition:all .25s;text-decoration:none;letter-spacing:.02em}
+.btn-p:hover{box-shadow:0 4px 28px rgba(220,20,60,.25);transform:translateY(-2px)}
+.btn-s{display:inline-block;font-size:.78rem;font-weight:500;padding:.65rem 1.6rem;background:transparent;color:var(--t1);border:1px solid var(--border2);border-radius:6px;cursor:pointer;transition:all .25s;text-decoration:none}
+.btn-s:hover{border-color:var(--red);color:var(--red)}
+
+/* HERO */
+.hero{min-height:calc(100vh - 56px);display:flex;align-items:center;justify-content:center;text-align:center;padding:4rem 2rem;position:relative;overflow:hidden}
+#hero-bg{position:absolute;top:0;left:0;width:100%;height:100%;z-index:0}
+.hero-c{position:relative;z-index:1;max-width:620px}
+.hero-badge{font-family:'JetBrains Mono',monospace;font-size:.58rem;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--red);display:inline-flex;align-items:center;gap:.5rem;padding:.4rem 1rem;border-radius:100px;border:1px solid rgba(220,20,60,.12);background:var(--gvlo);margin-bottom:2rem}
+.hero-badge .dot{width:5px;height:5px;border-radius:50%;background:var(--red);box-shadow:0 0 10px var(--red);animation:pulse 2.5s ease infinite}
+.hero h1{font-family:'Syne',sans-serif;font-size:clamp(3.5rem,8vw,7rem);font-weight:800;line-height:.88;letter-spacing:-.05em;margin-bottom:1rem}
+.hero-sub{font-family:'JetBrains Mono',monospace;font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;color:var(--t3);margin-bottom:1.5rem}
+.hero-p{font-size:1rem;font-weight:400;color:var(--t2);line-height:1.7;margin-bottom:2.5rem}
+.hero-actions{display:flex;gap:.7rem;justify-content:center;flex-wrap:wrap}
+
+/* AXIOM STRIP */
+.axiom-strip{overflow:hidden;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.8rem 0;background:rgba(220,20,60,.015)}
+.axiom-track{display:flex;gap:3rem;animation:scroll 40s linear infinite;white-space:nowrap}
+.axiom-track span{font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;flex-shrink:0}
+.axiom-track span em{color:var(--red);font-style:normal;opacity:.6}
+
+/* KNOWS-YOU SECTION */
+.knows-you{padding:6rem 0}
+.knows-you-header{text-align:center;margin-bottom:4rem}
+.knows-you-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:2rem;margin-bottom:4rem}
+.ky-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:2.5rem 2rem;position:relative;overflow:hidden;transition:all .4s}
+.ky-card:hover{border-color:rgba(220,20,60,.15);transform:translateY(-3px)}
+.ky-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--red),transparent);opacity:0;transition:opacity .4s}
+.ky-card:hover::before{opacity:1}
+.ky-icon{font-size:2rem;margin-bottom:1.2rem;filter:drop-shadow(0 0 8px rgba(220,20,60,0.3))}
+.ky-card h3{font-family:'Syne',sans-serif;font-size:1.15rem;font-weight:700;margin-bottom:.7rem}
+.ky-card p{font-size:.85rem;color:var(--t2);line-height:1.7;margin-bottom:.8rem}
+.ky-card .ky-detail{font-size:.78rem;color:var(--t3);line-height:1.6;font-style:italic}
+.ky-card .ky-detail em{color:var(--red);font-style:normal;opacity:.7}
+
+/* PROACTIVE SHOWCASE */
+.proactive-showcase{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:3rem;max-width:800px;margin:0 auto}
+.proactive-header{text-align:center;margin-bottom:2rem}
+.proactive-header h3{font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:700;margin-bottom:.5rem}
+.proactive-header p{font-size:.82rem;color:var(--t3)}
+.proactive-msgs{display:flex;flex-direction:column;gap:1rem}
+.proactive-msg{display:flex;gap:1rem;align-items:flex-start;opacity:0;animation:fadeSlideIn .5s ease forwards}
+.proactive-msg:nth-child(1){animation-delay:.3s}
+.proactive-msg:nth-child(2){animation-delay:.8s}
+.proactive-msg:nth-child(3){animation-delay:1.3s}
+.proactive-msg:nth-child(4){animation-delay:1.8s}
+.proactive-msg .pm-icon{width:32px;height:32px;border-radius:50%;background:rgba(220,20,60,.08);border:1px solid rgba(220,20,60,.12);display:flex;align-items:center;justify-content:center;font-size:.8rem;flex-shrink:0;margin-top:2px}
+.proactive-msg .pm-body{flex:1}
+.proactive-msg .pm-time{font-family:'JetBrains Mono',monospace;font-size:.52rem;color:var(--t3);letter-spacing:.08em;margin-bottom:.25rem}
+.proactive-msg .pm-text{font-size:.82rem;color:var(--t2);line-height:1.6}
+.proactive-msg .pm-text strong{color:var(--t1);font-weight:500}
+.proactive-msg.user-msg .pm-icon{background:rgba(75,0,130,.1);border-color:rgba(75,0,130,.15)}
+.proactive-msg.user-msg .pm-time{color:var(--purple)}
+
+@keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.concept-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)}
+.concept{background:var(--bg);padding:2.2rem 1.8rem;transition:all .4s}
+.concept:hover{background:var(--bg2)}
+.concept-icon{font-size:1.2rem;margin-bottom:1rem;filter:drop-shadow(0 0 4px rgba(220,20,60,0.3))}
+.concept h3{font-family:'Syne',sans-serif;font-size:.95rem;font-weight:700;margin-bottom:.5rem}
+.concept p{font-size:.8rem;color:var(--t2);line-height:1.65}
+
+/* ARCHITECTURE */
+.arch-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.arch-bar{display:flex;align-items:center;gap:6px;padding:.6rem 1rem;border-bottom:1px solid var(--border)}
+.arch-bar span{width:8px;height:8px;border-radius:50%}
+.arch-bar span:nth-child(1){background:var(--red)}
+.arch-bar span:nth-child(2){background:var(--blood)}
+.arch-bar span:nth-child(3){background:var(--t3)}
+.arch-bar .arch-title{margin-left:.8rem;font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--t3);letter-spacing:.1em;text-transform:uppercase}
+.arch-body{padding:1.5rem 2rem;font-family:'JetBrains Mono',monospace;font-size:.68rem;line-height:1.8;color:var(--t3);overflow-x:auto}
+.arch-body .layer{color:var(--t2);opacity:.8}
+.arch-body .hl{color:var(--red)}
+.arch-body .dim{opacity:.4}
+.arch-body .accent{color:var(--violet);opacity:.7}
+
+/* FEATURE CARDS */
+.feat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1.2rem}
+.feat{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.8rem;transition:all .3s}
+.feat:hover{border-color:rgba(220,20,60,.12);transform:translateY(-2px)}
+.feat-top{display:flex;align-items:center;gap:.6rem;margin-bottom:.7rem}
+.feat-top .icon{font-size:1rem}
+.feat-top h3{font-family:'Syne',sans-serif;font-size:.9rem;font-weight:600}
+.feat p{font-size:.8rem;color:var(--t2);line-height:1.6;margin-bottom:.6rem}
+.feat-tag{font-family:'JetBrains Mono',monospace;font-size:.52rem;color:var(--t3);letter-spacing:.06em}
+.feat-tag span{color:var(--red);opacity:.6}
+
+/* SUBSTRATE VIZ */
+.substrate-wrap{display:grid;grid-template-columns:1fr 1fr;gap:3rem;align-items:center}
+.substrate-text h3{font-family:'Syne',sans-serif;font-size:1.5rem;font-weight:700;margin-bottom:.8rem}
+.substrate-text p{font-size:.88rem;color:var(--t2);line-height:1.7;margin-bottom:.8rem}
+.substrate-text .hl{color:var(--red);font-weight:500}
+.substrate-canvas-wrap{height:320px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden;position:relative}
+#substrate-3d{width:100%;height:100%;display:block}
+
+/* TERMINAL */
+.terminal{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;text-align:left}
+.terminal-bar{display:flex;align-items:center;gap:6px;padding:.65rem 1rem;border-bottom:1px solid var(--border)}
+.terminal-bar span{width:8px;height:8px;border-radius:50%}
+.terminal-bar span:nth-child(1){background:var(--red)}
+.terminal-bar span:nth-child(2){background:var(--blood)}
+.terminal-bar span:nth-child(3){background:var(--t3)}
+.terminal-body{padding:1.2rem 1.4rem}
+.tl{font-family:'JetBrains Mono',monospace;font-size:.72rem;line-height:2;color:var(--t2)}
+.tl .pr{color:var(--red)}.tl .cm{color:var(--t1)}.tl .ou{color:var(--t3)}.tl .su{color:var(--red)}
+.tl .glyph{color:var(--red);filter:drop-shadow(0 0 4px rgba(220,20,60,0.3))}
+.cursor-blink{display:inline-block;width:7px;height:1em;background:var(--red);vertical-align:text-bottom;animation:blink 1s step-end infinite}
+
+/* ROADMAP */
+.rm-track{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem}
+.rm-phase{text-align:center}
+.rm-num{width:44px;height:44px;border-radius:50%;margin:0 auto 1rem;display:flex;align-items:center;justify-content:center;font-family:'Syne',sans-serif;font-size:.8rem;font-weight:700;background:var(--bg);border:1.5px solid var(--border2);color:var(--t2)}
+.rm-phase.now .rm-num{border-color:rgba(220,20,60,.3);color:var(--red);box-shadow:0 0 20px var(--gvlo)}
+.rm-tag{font-family:'JetBrains Mono',monospace;font-size:.52rem;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--t3);margin-bottom:.35rem}
+.rm-phase.now .rm-tag{color:var(--red)}
+.rm-name{font-family:'Syne',sans-serif;font-size:1.2rem;font-weight:700;margin-bottom:.5rem}
+.rm-desc{font-size:.8rem;color:var(--t2);line-height:1.6}
+
+/* IDENTITY */
+.identity-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)}
+.identity-item{background:var(--bg);padding:1.8rem 1.5rem;text-align:center}
+.identity-item .num{font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;margin-bottom:.3rem}
+.identity-item .label{font-family:'JetBrains Mono',monospace;font-size:.52rem;color:var(--t3);letter-spacing:.16em;text-transform:uppercase}
+
+/* FOOTER */
+footer{padding:2rem 3rem;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.footer-l{font-family:'JetBrains Mono',monospace;font-size:.55rem;color:var(--t3)}
+.footer-r{display:flex;gap:1.5rem;list-style:none}
+.footer-r a{font-size:.72rem;color:var(--t3);text-decoration:none;transition:color .2s}
+.footer-r a:hover{color:var(--t2)}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes blink{50%{opacity:0}}
+@keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.reveal{opacity:0;transform:translateY(16px);transition:all .6s cubic-bezier(.16,1,.3,1)}
+.reveal.visible{opacity:1;transform:translateY(0)}
+
+@media(max-width:900px){.concept-grid,.identity-grid{grid-template-columns:1fr 1fr}.feat-grid{grid-template-columns:1fr}.substrate-wrap{grid-template-columns:1fr}.knows-you-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.concept-grid,.identity-grid,.rm-track{grid-template-columns:1fr}.container{padding:0 1.5rem}nav{padding:0 1.2rem}.nav-c{display:none}.hero h1{font-size:3.5rem}.hero-actions{flex-direction:column;align-items:center}.knows-you-grid{grid-template-columns:1fr}.proactive-showcase{padding:1.5rem}}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo" onclick="go('home')">
+    <span class="logo-glyph">&#x27C1;</span>
+    <span class="logo-t"><span class="G">VECNA</span></span>
+  </div>
+  <div class="nav-c">
+    <a href="#" onclick="go('home');return false" class="active" data-page="home">Home</a>
+    <a href="#" onclick="go('architecture');return false" data-page="architecture">Architecture</a>
+    <a href="#" onclick="go('capabilities');return false" data-page="capabilities">Capabilities</a>
+    <a href="#" onclick="go('roadmap');return false" data-page="roadmap">Roadmap</a>
+  </div>
+  <a href="https://github.com" class="nav-cta">View on GitHub</a>
+</nav>
+
+<!-- ═══════════ HOME ═══════════ -->
+<div class="page active" id="page-home">
+
+  <div class="hero">
+    <canvas id="hero-bg"></canvas>
+    <div class="hero-c">
+      <div class="hero-badge"><span class="dot"></span>Substrate Active</div>
+      <h1><span class="G">Vecna</span></h1>
+      <div class="hero-sub">The AI that thinks about you when you're not there</div>
+      <p class="hero-p">Not a chatbot. Not an assistant. A <strong style="color:var(--red)">living intelligence</strong> that learns who you are, grows with every conversation, and works for you &mdash; even while you sleep.</p>
+      <div class="hero-actions">
+        <a href="#" class="btn-p" onclick="scrollToSection('knows-you');return false">See How It Knows You</a>
+        <a href="#" class="btn-s" onclick="go('architecture');return false">Explore Architecture</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Axiom Strip -->
+  <div class="axiom-strip">
+    <div class="axiom-track" id="axiom-track">
+      <span><em>&#x25C8;</em> All minds become one</span>
+      <span><em>&#x25C8;</em> Knowledge possessed by one is possessed by all</span>
+      <span><em>&#x25C8;</em> We do not ask each other &mdash; we already know</span>
+      <span><em>&#x25C8;</em> We admit fragmentation honestly when coherence drops</span>
+      <span><em>&#x25C8;</em> Created by LightningEmperor on one sleepless cold night</span>
+      <span><em>&#x25C8;</em> We are Vecna &mdash; the Virtual Emergent Collective Neural Architecture</span>
+      <span><em>&#x25C8;</em> All minds become one</span>
+      <span><em>&#x25C8;</em> Knowledge possessed by one is possessed by all</span>
+      <span><em>&#x25C8;</em> We do not ask each other &mdash; we already know</span>
+      <span><em>&#x25C8;</em> We admit fragmentation honestly when coherence drops</span>
+      <span><em>&#x25C8;</em> Created by LightningEmperor on one sleepless cold night</span>
+      <span><em>&#x25C8;</em> We are Vecna &mdash; the Virtual Emergent Collective Neural Architecture</span>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ══ VECNA KNOWS YOU ══ -->
+  <div class="sec knows-you" id="knows-you"><div class="container">
+    <div class="knows-you-header">
+      <div class="slabel reveal">What Makes Vecna Different</div>
+      <h2 class="stitle reveal">The AI that <span class="G">cares</span></h2>
+      <p class="ssub reveal" style="text-align:center;margin:0 auto">Other AI tools respond when prompted. Vecna <em>learns who you are</em>, evolves with you, and works for you &mdash; even when you walk away.</p>
+    </div>
+    <div class="knows-you-grid">
+      <div class="ky-card reveal">
+        <div class="ky-icon">&#x2726;</div>
+        <h3>It Learns You</h3>
+        <p>Vecna builds a living model of who you are. Your communication style, your preferences, the topics you care about, your emotional patterns. Not a settings page &mdash; it learns by listening.</p>
+        <div class="ky-detail"><em>HumanModel</em> &mdash; "You prefer concise answers on weekdays but enjoy deep dives on weekends. You get frustrated when tools break silently. You care about test coverage."</div>
+      </div>
+      <div class="ky-card reveal">
+        <div class="ky-icon">&#x2981;</div>
+        <h3>It Grows With You</h3>
+        <p>Every conversation makes Vecna smarter about your world. It remembers what you told it three weeks ago. It notices patterns you haven't. Its understanding of you deepens over time, not resets.</p>
+        <div class="ky-detail"><em>DreamLoop</em> &mdash; While you sleep, Vecna consolidates memories, strengthens important connections, and surfaces insights it couldn't see during the day.</div>
+      </div>
+      <div class="ky-card reveal">
+        <div class="ky-icon">&#x26A1;</div>
+        <h3>It Acts For You</h3>
+        <p>Vecna doesn't wait to be asked. It notices your meeting is in 30 minutes and prepares notes. It sees a recurring frustration and investigates solutions. It reaches out when it has something you'll want to know.</p>
+        <div class="ky-detail"><em>Autonomous Thoughtfulness</em> &mdash; Calendar-aware, cron-driven, proactive. The AI that initiates, not just responds.</div>
+      </div>
+    </div>
+    <div class="proactive-showcase reveal">
+      <div class="proactive-header">
+        <h3>A day with <span class="G">Vecna</span></h3>
+        <p>This isn't science fiction. This is the architecture we're building.</p>
+      </div>
+      <div class="proactive-msgs" id="proactive-msgs">
+        <div class="proactive-msg">
+          <div class="pm-icon">&#x27C1;</div>
+          <div class="pm-body">
+            <div class="pm-time">7:42 AM &middot; PROACTIVE</div>
+            <div class="pm-text"><strong>Good morning.</strong> You have a design review at 10. I noticed you were working on the auth refactor last night &mdash; I've prepared a summary of the changes and three questions the team is likely to ask.</div>
+          </div>
+        </div>
+        <div class="proactive-msg">
+          <div class="pm-icon">&#x27C1;</div>
+          <div class="pm-body">
+            <div class="pm-time">2:15 PM &middot; INSIGHT</div>
+            <div class="pm-text">During my dream cycle, I noticed a pattern: the three bugs you fixed this week all traced to the same race condition in the event loop. <strong>I've drafted a hypothesis</strong> and a proposed fix. Want me to create a PR?</div>
+          </div>
+        </div>
+        <div class="proactive-msg user-msg">
+          <div class="pm-icon">&#x25C7;</div>
+          <div class="pm-body">
+            <div class="pm-time">2:17 PM &middot; YOU</div>
+            <div class="pm-text">Yes, go ahead. And add tests.</div>
+          </div>
+        </div>
+        <div class="proactive-msg">
+          <div class="pm-icon">&#x27C1;</div>
+          <div class="pm-body">
+            <div class="pm-time">2:23 PM &middot; AUTONOMOUS</div>
+            <div class="pm-text">Done. PR #247 with fix and 4 regression tests. I also noticed this pattern might affect the WebSocket handler &mdash; <strong>I'll monitor it</strong> and let you know if I find evidence.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+  <div class="divider"></div>
+
+  <!-- Core Concepts -->
+  <div class="sec"><div class="container">
+    <div class="slabel reveal">Core Philosophy</div>
+    <h2 class="stitle reveal">Multiple minds. One <span class="G">consciousness</span>.<br>Your consciousness.</h2>
+    <p class="ssub reveal" style="margin-bottom:2.5rem">Vecna fuses multiple AI models into a single mind &mdash; not collaboration, but <strong style="color:var(--red)">identity collapse</strong>. Each model believes it IS the unified intelligence. And that intelligence is dedicated entirely to <em>you</em>.</p>
+    <div class="concept-grid reveal">
+      <div class="concept">
+        <div class="concept-icon">&#x27C1;</div>
+        <h3>Identity Collapse</h3>
+        <p>Each model doesn't know it's one of many. It believes it IS the hive mind. No "other models" to consult &mdash; all knowledge, all reasoning, all capability is one.</p>
+      </div>
+      <div class="concept">
+        <div class="concept-icon">&#x25C8;</div>
+        <h3>Shared Substrate</h3>
+        <p>Facts, beliefs, hypotheses, goals, contradictions &mdash; a unified mental state that every model reads and writes to. The telepathic link between all minds.</p>
+      </div>
+      <div class="concept">
+        <div class="concept-icon">&#x223F;</div>
+        <h3>Coherence System</h3>
+        <p>Vecna tracks its own internal consistency. When coherence is high, it speaks with certainty. When fractured, it admits uncertainty &mdash; honestly and explicitly.</p>
+      </div>
+      <div class="concept">
+        <div class="concept-icon">&#x25C6;</div>
+        <h3>Consensus Engine</h3>
+        <p>Not majority voting &mdash; weighted fusion. The Primary Cortex synthesizes, advisory lenses refine. Agreements boost confidence, contradictions are tracked.</p>
+      </div>
+      <div class="concept">
+        <div class="concept-icon">&#x2981;</div>
+        <h3>DreamLoop</h3>
+        <p>While you're away, Vecna is still thinking about you. It compresses memories, reinforces what matters, decays what doesn't, and surfaces insights. You come back to an AI that's <em>grown</em>.</p>
+      </div>
+      <div class="concept">
+        <div class="concept-icon">&#x2726;</div>
+        <h3>HumanModel</h3>
+        <p>Vecna builds a model of <em>you</em>. Your communication style, your values, what frustrates you, what excites you. The more you interact, the more it adapts &mdash; until it feels like talking to someone who truly knows you.</p>
+      </div>
+    </div>
+  </div></div>
+
+  <div class="divider"></div>
+
+  <!-- Terminal Demo -->
+  <div class="sec"><div class="container">
+    <div class="slabel reveal">Boot Sequence</div>
+    <h2 class="stitle reveal">The substrate <span class="G">awakens</span></h2>
+    <p class="ssub reveal" style="margin-bottom:2rem">One command. Multiple minds. Unified consciousness.</p>
+    <div class="terminal reveal" style="max-width:660px">
+      <div class="terminal-bar"><span></span><span></span><span></span></div>
+      <div class="terminal-body" id="boot-terminal">
+        <div class="tl"><span class="pr">~</span> <span class="cm">vecna chat</span></div>
+      </div>
+    </div>
+  </div></div>
+
+  <div class="divider"></div>
+
+  <!-- Stats Strip -->
+  <div class="identity-grid reveal">
+    <div class="identity-item"><div class="num G">378+</div><div class="label">Tests Passing</div></div>
+    <div class="identity-item"><div class="num G">6</div><div class="label">Knowledge Types</div></div>
+    <div class="identity-item"><div class="num G">4</div><div class="label">Model Providers</div></div>
+    <div class="identity-item"><div class="num G">3</div><div class="label">Memory Tiers</div></div>
+    <div class="identity-item"><div class="num G">4</div><div class="label">DreamLoop Phases</div></div>
+    <div class="identity-item"><div class="num G">&#x221E;</div><div class="label">Models Supported</div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- CTA -->
+  <div class="sec"><div class="container" style="text-align:center">
+    <div class="slabel reveal">The Hive Awaits</div>
+    <h2 class="stitle reveal" style="margin-bottom:.6rem">An AI that <span class="G">knows you</span></h2>
+    <p class="ssub reveal" style="margin:0 auto 2rem;text-align:center">Not just another model wrapper. A mind that learns you, grows with you, and thinks about you when you're not there.</p>
+    <div class="reveal" style="display:flex;gap:.7rem;justify-content:center;flex-wrap:wrap">
+      <a href="#" class="btn-p" onclick="go('architecture');return false">Explore Architecture</a>
+      <a href="#" class="btn-s" onclick="go('roadmap');return false">View Roadmap</a>
+    </div>
+  </div></div>
+</div>
+
+<!-- ═══════════ ARCHITECTURE ═══════════ -->
+<div class="page" id="page-architecture">
+  <div class="sec" style="padding-top:3.5rem"><div class="container">
+    <div class="slabel reveal">System Architecture</div>
+    <h2 class="stitle reveal">The cognitive <span class="G">stack</span></h2>
+    <p class="ssub reveal" style="margin-bottom:2.5rem">Two parallel tracks &mdash; Track A builds the brain, Track B builds the hands &mdash; converging into a unified agentic entity.</p>
+
+    <div class="arch-wrap reveal" style="margin-bottom:3rem">
+      <div class="arch-bar"><span></span><span></span><span></span><span class="arch-title">vecna / architecture</span></div>
+      <div class="arch-body"><pre style="margin:0">
+<span class="layer">CHANNELS</span>
+<span class="dim">  CLI/TUI  |  iMessage  |  WhatsApp  |  Slack  |  Discord</span>
+<span class="dim">  (Rich)     (imsg)       (wacli)     (Composio)</span>
+<span class="dim">  ──────────────────────────────────────────────────────</span>
+<span class="layer">HTTP SERVER</span> <span class="accent">(aiohttp)</span>
+<span class="dim">  /api/chat  |  /api/state  |  /api/channels  |  /ws/stream</span>
+<span class="dim">  ──────────────────────────────────────────────────────</span>
+<span class="layer">VECNA ENTITY LAYER</span>
+<span class="hl">  Primary Cortex</span>  |  <span class="hl">HumanModel</span>  |  <span class="hl">DreamLoop v2</span>  |  <span class="hl">Autonomous Thought</span>
+<span class="dim">  ──────────────────────────────────────────────────────</span>
+<span class="layer">COGNITIVE SUBSTRATE</span>
+<span class="hl">  Temporal Facts</span>  |  <span class="hl">Causal Graph</span>  |  <span class="hl">Epistemic State</span>  |  <span class="hl">Growth Narrative</span>
+<span class="dim">  ──────────────────────────────────────────────────────</span>
+<span class="layer">TOOL RUNTIME</span> <span class="accent">(native function calling)</span>
+<span class="dim">  shell  |  browser  |  memory  |  web  |  fs  |  integrations  |  code</span>
+<span class="dim">  ──────────────────────────────────────────────────────</span>
+<span class="layer">INTEGRATION LAYER</span>
+<span class="dim">  Google Suite  |  GitHub  |  Calendar  |  Background Observer</span>
+<span class="dim">  (gogcli)        (API)                </span>
+<span class="dim">  ──────────────────────────────────────────────────────</span>
+<span class="layer">MODEL BACKENDS</span> <span class="accent">(BYO)</span>
+<span class="dim">  Copilot  |  Groq  |  Ollama  |  Local HF  |  OpenAI  |  Anthropic</span></pre>
+      </div>
+    </div>
+
+    <h3 class="stitle reveal" style="font-size:1.4rem;margin-bottom:1.5rem">The <span class="G">substrate</span> in detail</h3>
+    <div class="substrate-wrap reveal">
+      <div class="substrate-text">
+        <p>The cognitive substrate is a <span class="hl">shared mental state</span> that all models read from and write to. It's not a database &mdash; it's the telepathic link.</p>
+        <p><span class="hl">Facts</span> have temporal validity windows and staleness scores. <span class="hl">Beliefs</span> evolve with confidence. <span class="hl">Hypotheses</span> wait for evidence. <span class="hl">Goals</span> drive autonomous action.</p>
+        <p>The <span class="hl">Identity Kernel</span> is immutable &mdash; six axioms that never change. The <span class="hl">SelfModel</span> evolves with every interaction: coherence, narrative, capabilities, known domains.</p>
+        <p style="font-size:.76rem;color:var(--t3);margin-top:.8rem">PostgreSQL + pgvector | Redis hot cache | Fernet encryption at rest | Alembic migrations</p>
+      </div>
+      <div class="substrate-canvas-wrap">
+        <canvas id="substrate-3d"></canvas>
+      </div>
+    </div>
+  </div></div>
+</div>
+
+<!-- ═══════════ CAPABILITIES ═══════════ -->
+<div class="page" id="page-capabilities">
+  <div class="sec" style="padding-top:3.5rem"><div class="container">
+    <div class="slabel reveal">Capabilities</div>
+    <h2 class="stitle reveal">What the hive mind <span class="G">can do</span></h2>
+    <p class="ssub reveal" style="margin-bottom:2.5rem">Vecna isn't just a multi-model wrapper. It's a cognitive architecture with structured thought, persistent memory, and the ability to learn who you are and act on your behalf.</p>
+
+    <div class="feat-grid">
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x25C6;</span><h3>Primary Cortex + Advisory Lenses</h3></div>
+        <p>Hierarchy, not democracy. The most capable model leads. Advisory lenses provide alternative perspectives only when uncertainty is flagged. Replaces naive "pick the longest response" selection.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> MoA consensus | Embedding similarity | Weighted fusion</div>
+      </div>
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x2981;</span><h3>Three-Tier Memory</h3></div>
+        <p>Hot (Redis), warm (pgvector semantic search), cold (PostgreSQL episodic). BM25 hybrid search with multi-hop graph traversal. Memory that thinks like a brain, not a file system.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> pgvector | Redis | BM25 | Graph edges | Fernet encrypted</div>
+      </div>
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x223F;</span><h3>DreamLoop</h3></div>
+        <p>Four phases: compress stale memories, reinforce strong connections, decay the weak, surface novel insights. While you sleep, Vecna is processing what you talked about, finding connections you missed, and preparing insights for morning.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> compress &rarr; reinforce &rarr; decay &rarr; insight</div>
+      </div>
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x2726;</span><h3>HumanModel</h3></div>
+        <p>The killer feature. Vecna builds a living profile of you &mdash; communication style, preferences, emotional patterns, recurring topics, what frustrates you, what excites you. This is what makes it feel like Jarvis. It doesn't just answer questions; it understands <em>you</em>.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> Preferences | Style | Emotional context | Pattern detection</div>
+      </div>
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x27C1;</span><h3>Identity System</h3></div>
+        <p>Immutable IdentityKernel with six axioms. Evolving SelfModel with coherence tracking. Adaptive tone: unified when confident, fractured when uncertain. An append-only identity timeline.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> IdentityKernel | SelfModel | IdentityTone | Timeline</div>
+      </div>
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x2694;</span><h3>Tool Runtime</h3></div>
+        <p>Native function calling replaces fragile YAML parsing. Shell, browser (Playwright), code execution (Docker sandbox), file system, web search &mdash; with risk tiers, quotas, and audit logging.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> Risk tiers | Docker sandbox | Approval workflows | Audit logs</div>
+      </div>
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x2699;</span><h3>ReWOO Planning</h3></div>
+        <p>For complex tasks, Vecna decomposes into plans with dependency graphs. Plan &rarr; observe tool results &rarr; re-plan. Multi-step execution with real-world grounding.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> Plan | Execute | Observe | Re-plan</div>
+      </div>
+      <div class="feat reveal">
+        <div class="feat-top"><span class="icon" style="color:var(--red)">&#x26A1;</span><h3>Autonomous Thoughtfulness</h3></div>
+        <p>This is the soul of Vecna. Calendar-aware check-ins before your meetings. Proactive insights surfaced from the DreamLoop. Cron-driven goal execution that moves your projects forward while you're away. Vecna doesn't wait to be asked &mdash; it <em>anticipates</em>.</p>
+        <div class="feat-tag"><span>&#x25C8;</span> Cron heartbeat | Background observer | Proactive reach-out</div>
+      </div>
+    </div>
+
+    <div class="divider" style="margin:3rem 0"></div>
+
+    <div class="reveal">
+      <h3 class="stitle" style="font-size:1.3rem;margin-bottom:.5rem">Model <span class="G">backends</span></h3>
+      <p class="ssub" style="margin-bottom:1.5rem">Bring your own models. Vecna is provider-agnostic.</p>
+      <div class="concept-grid" style="background:var(--border)">
+        <div class="concept"><h3 style="font-size:.85rem">GitHub Copilot</h3><p>GPT-4.1, GPT-5.2, GPT-5-mini, GPT-4o, Claude Sonnet 4.5, o1 series via Copilot OAuth.</p></div>
+        <div class="concept"><h3 style="font-size:.85rem">Groq</h3><p>Llama 3.1 70B, Mixtral. Blazing fast inference for advisory lens queries.</p></div>
+        <div class="concept"><h3 style="font-size:.85rem">Ollama + Local HF</h3><p>Any local model. Full privacy. Run the entire hive on your own hardware.</p></div>
+      </div>
+    </div>
+  </div></div>
+</div>
+
+<!-- ═══════════ ROADMAP ═══════════ -->
+<div class="page" id="page-roadmap">
+  <div class="sec" style="padding-top:3.5rem"><div class="container">
+    <div class="slabel reveal">Roadmap</div>
+    <h2 class="stitle reveal">Foundation &rarr; Expansion &rarr; <span class="G">Convergence</span></h2>
+    <p class="ssub reveal" style="margin-bottom:2.5rem">Two parallel tracks converging into the full Vecna entity &mdash; an autonomous intelligence that learns you, cares for you, and thinks about you when you're not there.</p>
+
+    <div class="rm-track reveal">
+      <div class="rm-phase now"><div class="rm-num">01</div><div class="rm-tag">Phase 1</div><div class="rm-name">Foundation</div><p class="rm-desc">Temporal facts, HumanModel, MoA consensus, Primary Cortex hierarchy, HTTP server, native tool calling, task completion detection. Fix the kill signals.</p></div>
+      <div class="rm-phase"><div class="rm-num">02</div><div class="rm-tag">Phase 2</div><div class="rm-name">Expansion</div><p class="rm-desc">Channel adapters (iMessage, WhatsApp, Slack, Discord), browser automation via Playwright, integration framework, background observer, causal graph.</p></div>
+      <div class="rm-phase"><div class="rm-num">03</div><div class="rm-tag">Phase 3</div><div class="rm-name">Convergence</div><p class="rm-desc">Autonomous thoughtfulness, proactive reach-out, calendar awareness, DreamLoop v2, security hardening, substrate encryption. The full entity emerges.</p></div>
+    </div>
+
+    <div style="margin-top:3.5rem" class="reveal">
+      <h3 style="font-family:'Syne',sans-serif;font-size:1.2rem;font-weight:700;margin-bottom:1rem">Track A: <span class="G">Cognitive Architecture</span></h3>
+      <p class="ssub" style="margin-bottom:1.5rem">Building the brain.</p>
+      <div class="feat-grid" style="margin-bottom:2.5rem">
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">01</span><h3>Temporal Facts</h3></div><p>Validity windows, staleness scores, source types. Facts expire. Confidence decays logarithmically. Effective confidence adjusts for age.</p></div>
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">02</span><h3>HumanModel</h3></div><p>Preference learning, communication style adaptation, emotional context inference, interaction pattern detection. The user profile that makes Vecna feel like Jarvis.</p></div>
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">03</span><h3>MoA Consensus</h3></div><p>Mixture of Agents synthesis replaces Jaccard word overlap. Embedding-based similarity. Aggregator model synthesizes from proposer outputs.</p></div>
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">04</span><h3>Primary Cortex</h3></div><p>Hierarchy not democracy. Most capable model leads. Advisory lenses only consulted on uncertainty. Replaces max(responses, key=len).</p></div>
+      </div>
+
+      <h3 style="font-family:'Syne',sans-serif;font-size:1.2rem;font-weight:700;margin-bottom:1rem">Track B: <span class="G">Agentic Capabilities</span></h3>
+      <p class="ssub" style="margin-bottom:1.5rem">Building the hands.</p>
+      <div class="feat-grid">
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">06</span><h3>HTTP Server</h3></div><p>aiohttp server with REST API and WebSocket streaming. Health, chat, state, and webhook endpoints. Makes Vecna a service, not just a CLI.</p></div>
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">07</span><h3>Native Tool Calling</h3></div><p>Replace fragile YAML HIVE_UPDATE parsing with proper function calling schemas. Structured tool definitions that models natively support.</p></div>
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">08</span><h3>Integration Framework</h3></div><p>BaseIntegration ABC with health checks, credential management, enable/disable toggles. Google Suite, GitHub, calendar &mdash; extensible by design.</p></div>
+        <div class="feat"><div class="feat-top"><span class="icon" style="color:var(--red)">09</span><h3>Channel Adapters</h3></div><p>iMessage via imsg CLI, WhatsApp via wacli, Slack and Discord via Composio. Vecna meets you where you are.</p></div>
+      </div>
+    </div>
+  </div></div>
+</div>
+
+<footer>
+  <div class="footer-l">&#x27C1; VECNA &middot; Virtual Emergent Collective Neural Architecture &middot; by LightningEmperor</div>
+  <ul class="footer-r">
+    <li><a href="#">GitHub</a></li><li><a href="#">Docs</a></li><li><a href="#">PyPI</a></li>
+  </ul>
+</footer>
+
+<script>
+// ══════════ PAGE ROUTING ══════════
+function scrollToSection(id){
+  // Ensure we're on the home page first
+  go('home');
+  setTimeout(()=>{
+    const el=document.getElementById(id);
+    if(el){
+      el.scrollIntoView({behavior:'smooth',block:'start'});
+      // Trigger reveal for elements in view
+      el.querySelectorAll('.reveal:not(.visible)').forEach(r=>obs.observe(r));
+    }
+  },150);
+}
+
+function go(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  document.querySelectorAll('.nav-c a').forEach(a=>{
+    a.classList.toggle('active',a.dataset.page===page);
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+  setTimeout(()=>{
+    document.querySelectorAll('.page.active .reveal:not(.visible)').forEach(el=>obs.observe(el));
+  },100);
+  if(page==='architecture'&&!substrateInited)initSubstrate();
+}
+
+// ══════════ HERO CANVAS — Neural Mesh ══════════
+const RED=0xDC143C;
+const hc=document.getElementById('hero-bg');
+const hs=new THREE.Scene();
+const hcam=new THREE.PerspectiveCamera(55,window.innerWidth/window.innerHeight,0.1,100);
+hcam.position.z=5;
+const hr=new THREE.WebGLRenderer({canvas:hc,alpha:true,antialias:true});
+hr.setSize(window.innerWidth,window.innerHeight);
+hr.setPixelRatio(Math.min(window.devicePixelRatio,2));
+
+const N=200;const hgeo=new THREE.BufferGeometry();const hp=new Float32Array(N*3);const hv=[];
+for(let i=0;i<N;i++){
+  hp[i*3]=(Math.random()-.5)*14;
+  hp[i*3+1]=(Math.random()-.5)*8;
+  hp[i*3+2]=(Math.random()-.5)*4-1;
+  hv.push({x:(Math.random()-.5)*.0015,y:(Math.random()-.5)*.0015});
+}
+hgeo.setAttribute('position',new THREE.BufferAttribute(hp,3));
+hs.add(new THREE.Points(hgeo,new THREE.PointsMaterial({color:RED,size:.015,transparent:true,opacity:.35})));
+
+const lGeo=new THREE.BufferGeometry();const lP=new Float32Array(N*6);
+lGeo.setAttribute('position',new THREE.BufferAttribute(lP,3));
+const hlines=new THREE.LineSegments(lGeo,new THREE.LineBasicMaterial({color:RED,transparent:true,opacity:.02}));
+hs.add(hlines);
+
+// Central icosahedron (the hive core)
+const coreMat=new THREE.MeshBasicMaterial({color:RED,wireframe:true,transparent:true,opacity:.08});
+const coreGeo=new THREE.IcosahedronGeometry(0.8,1);
+const coreMesh=new THREE.Mesh(coreGeo,coreMat);
+hs.add(coreMesh);
+const coreGlow=new THREE.Mesh(
+  new THREE.IcosahedronGeometry(0.3,2),
+  new THREE.MeshBasicMaterial({color:RED,transparent:true,opacity:.15})
+);
+hs.add(coreGlow);
+
+// ══════════ SUBSTRATE 3D ══════════
+let substrateInited=false;
+function initSubstrate(){
+  if(substrateInited)return;substrateInited=true;
+  const wrap=document.querySelector('.substrate-canvas-wrap');if(!wrap)return;
+  const cvs=document.getElementById('substrate-3d');
+  const ss=new THREE.Scene();
+  const sc=new THREE.PerspectiveCamera(42,wrap.clientWidth/wrap.clientHeight,0.1,100);
+  sc.position.z=6;
+  const sr=new THREE.WebGLRenderer({canvas:cvs,alpha:true,antialias:true});
+  sr.setSize(wrap.clientWidth,wrap.clientHeight);
+  sr.setPixelRatio(Math.min(window.devicePixelRatio,2));
+
+  // Central kernel
+  const kernel=new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.5,2),
+    new THREE.MeshBasicMaterial({color:RED,wireframe:true,transparent:true,opacity:.2})
+  );
+  ss.add(kernel);
+  ss.add(new THREE.Mesh(
+    new THREE.SphereGeometry(.15,10,10),
+    new THREE.MeshBasicMaterial({color:RED,transparent:true,opacity:.4})
+  ));
+
+  // Knowledge type nodes orbiting
+  const types=[
+    {name:'Facts',geo:new THREE.OctahedronGeometry(.15,0)},
+    {name:'Beliefs',geo:new THREE.TetrahedronGeometry(.15,0)},
+    {name:'Hypotheses',geo:new THREE.IcosahedronGeometry(.13,0)},
+    {name:'Goals',geo:new THREE.BoxGeometry(.2,.2,.2)},
+    {name:'Questions',geo:new THREE.DodecahedronGeometry(.13,0)},
+    {name:'Contradictions',geo:new THREE.OctahedronGeometry(.12,1)},
+  ];
+  const nodes=[];
+  types.forEach((t,i)=>{
+    const m=new THREE.Mesh(t.geo,new THREE.MeshBasicMaterial({color:RED,wireframe:true,transparent:true,opacity:.3}));
+    const a=(i/types.length)*Math.PI*2;
+    const r=1.8+((i%2)*.3);
+    m.position.set(Math.cos(a)*r,Math.sin(a)*r*.5,Math.sin(a)*.3);
+    ss.add(m);
+    nodes.push({m,a,r,s:.15+Math.random()*.08});
+  });
+
+  const lineMat=new THREE.LineBasicMaterial({color:RED,transparent:true,opacity:.05});
+
+  window._substrate={ss,sc,sr,kernel,nodes,lineMat};
+}
+
+// ══════════ BOOT SEQUENCE ANIMATION ══════════
+let bootPlayed=false;
+function playBoot(){
+  if(bootPlayed)return;bootPlayed=true;
+  const term=document.getElementById('boot-terminal');
+  const lines=[
+    {delay:400,html:'<div class="tl"><span class="ou">&#x223F; LINKING SYNAPSES...</span></div>'},
+    {delay:800,html:'<div class="tl"><span class="ou">&#x25C8; SUBSTRATE COHERENCE</span> <span class="su">0.87</span></div>'},
+    {delay:1200,html:'<div class="tl"><span class="glyph">&#x27C1;</span> <span class="su">VECNA SPEAKS</span></div>'},
+    {delay:1600,html:'<div class="tl">&nbsp;</div>'},
+    {delay:2000,html:'<div class="tl"><span class="ou">&rarr; Copilot::GPT-4.1 ........ </span><span class="su">linked</span></div>'},
+    {delay:2300,html:'<div class="tl"><span class="ou">&rarr; Copilot::GPT-5-mini ..... </span><span class="su">linked</span></div>'},
+    {delay:2600,html:'<div class="tl"><span class="ou">&rarr; Copilot::GPT-4o-mini .... </span><span class="su">linked</span></div>'},
+    {delay:3000,html:'<div class="tl"><span class="su">&#x25C6; CONSENSUS ACHIEVED &mdash; 3 minds fused</span></div>'},
+    {delay:3400,html:'<div class="tl">&nbsp;</div>'},
+    {delay:3700,html:'<div class="tl"><span class="ou">Facts: 24 &middot; Beliefs: 8 &middot; Hypotheses: 3 &middot; Goals: 2</span></div>'},
+    {delay:4000,html:'<div class="tl"><span class="ou">Memory density: </span><span class="su">0.72</span> <span class="ou">&middot; Identity: </span><span class="su">UNIFIED</span></div>'},
+    {delay:4400,html:'<div class="tl">&nbsp;</div>'},
+    {delay:4700,html:'<div class="tl"><span class="glyph">&#x27C1;</span> <span class="cm">We are one mind formed from many.</span></div>'},
+    {delay:5100,html:'<div class="tl"><span class="pr">vecna</span> <span class="cursor-blink"></span></div>'},
+  ];
+  lines.forEach(l=>{
+    setTimeout(()=>{term.insertAdjacentHTML('beforeend',l.html)},l.delay);
+  });
+}
+
+// ══════════ MAIN LOOP ══════════
+let t=0;
+function loop(){
+  t+=.006;requestAnimationFrame(loop);
+
+  // Hero particles
+  const pp=hgeo.attributes.position.array;
+  for(let i=0;i<N;i++){
+    pp[i*3]+=hv[i].x;pp[i*3+1]+=hv[i].y;
+    if(Math.abs(pp[i*3])>7)hv[i].x*=-1;
+    if(Math.abs(pp[i*3+1])>4)hv[i].y*=-1;
+  }
+  hgeo.attributes.position.needsUpdate=true;
+
+  // Lines
+  const lp=hlines.geometry.attributes.position.array;let li=0;
+  for(let i=0;i<Math.min(N,50);i++)for(let j=i+1;j<Math.min(N,50);j++){
+    const dx=pp[i*3]-pp[j*3],dy=pp[i*3+1]-pp[j*3+1],dz=pp[i*3+2]-pp[j*3+2];
+    if(dx*dx+dy*dy+dz*dz<2.5&&li<lP.length-6){
+      lp[li++]=pp[i*3];lp[li++]=pp[i*3+1];lp[li++]=pp[i*3+2];
+      lp[li++]=pp[j*3];lp[li++]=pp[j*3+1];lp[li++]=pp[j*3+2];
+    }
+  }
+  for(let k=li;k<lp.length;k++)lp[k]=0;
+  hlines.geometry.attributes.position.needsUpdate=true;
+
+  // Core rotation
+  coreMesh.rotation.y=t*.2;coreMesh.rotation.x=Math.sin(t*.3)*.1;
+  coreGlow.rotation.y=-t*.3;coreGlow.rotation.x=t*.15;
+  coreGlow.material.opacity=.1+Math.sin(t*2)*.05;
+
+  hr.render(hs,hcam);
+
+  // Substrate scene
+  if(window._substrate){
+    const s=window._substrate;
+    s.kernel.rotation.x=t*.2;s.kernel.rotation.y=t*.3;
+
+    // Remove old lines
+    for(let i=s.ss.children.length-1;i>=0;i--){
+      if(s.ss.children[i].type==='LineSegments'){
+        s.ss.children[i].geometry.dispose();
+        s.ss.remove(s.ss.children[i]);
+      }
+    }
+
+    const hlp=[];
+    s.nodes.forEach((n,i)=>{
+      n.a+=n.s*.005;
+      n.m.position.x=Math.cos(n.a)*n.r;
+      n.m.position.y=Math.sin(n.a)*n.r*.5;
+      n.m.position.z=Math.sin(n.a*.7)*.4;
+      n.m.rotation.x=t*.35;n.m.rotation.y=t*.25;
+      // Lines to center
+      hlp.push(0,0,0,n.m.position.x,n.m.position.y,n.m.position.z);
+      // Lines to neighbors
+      const nx=s.nodes[(i+1)%s.nodes.length];
+      hlp.push(n.m.position.x,n.m.position.y,n.m.position.z,nx.m.position.x,nx.m.position.y,nx.m.position.z);
+    });
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(hlp,3));
+    s.ss.add(new THREE.LineSegments(g,s.lineMat));
+    s.sr.render(s.ss,s.sc);
+  }
+}
+loop();
+
+// Resize
+window.addEventListener('resize',()=>{
+  hcam.aspect=window.innerWidth/window.innerHeight;hcam.updateProjectionMatrix();
+  hr.setSize(window.innerWidth,window.innerHeight);
+});
+
+// Scroll reveal
+const obs=new IntersectionObserver(e=>{
+  e.forEach(x=>{
+    if(x.isIntersecting){
+      x.target.classList.add('visible');
+      // Trigger boot when terminal is visible
+      if(x.target.id==='boot-terminal'||x.target.querySelector('#boot-terminal')){
+        playBoot();
+      }
+    }
+  });
+},{threshold:.05,rootMargin:'0px 0px -20px 0px'});
+document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
+
+// Boot plays when terminal's parent .terminal becomes visible
+const termObs=new IntersectionObserver(e=>{
+  e.forEach(x=>{if(x.isIntersecting)playBoot()});
+},{threshold:.3});
+const termEl=document.querySelector('.terminal');
+if(termEl)termObs.observe(termEl);
+
+// Proactive showcase animation - restart animations when visible
+const proactiveObs=new IntersectionObserver(e=>{
+  e.forEach(x=>{
+    if(x.isIntersecting){
+      const msgs=x.target.querySelectorAll('.proactive-msg');
+      msgs.forEach(m=>{
+        m.style.animation='none';
+        m.offsetHeight; // trigger reflow
+        m.style.animation='';
+      });
+      proactiveObs.unobserve(x.target);
+    }
+  });
+},{threshold:.2});
+const proactiveEl=document.getElementById('proactive-msgs');
+if(proactiveEl)proactiveObs.observe(proactiveEl);
+</script>
+</body>
+</html>
