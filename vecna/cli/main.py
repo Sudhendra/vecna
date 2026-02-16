@@ -204,6 +204,11 @@ def get_hive(use_config: bool = True):
                 rewoo_retry_limit=vecna_config.rewoo_retry_limit,
                 rewoo_backoff_base_seconds=vecna_config.rewoo_backoff_base_seconds,
                 rewoo_max_artifact_chars=vecna_config.rewoo_max_artifact_chars,
+                rewoo_policy_denied_behavior=vecna_config.rewoo_policy_denied_behavior,
+                rewoo_artifact_injection_mode=vecna_config.rewoo_artifact_injection_mode,
+                rewoo_use_separate_synthesizer=vecna_config.rewoo_use_separate_synthesizer,
+                rewoo_min_task_words=vecna_config.rewoo_min_task_words,
+                rewoo_force=vecna_config.rewoo_force,
             )
 
             hive = HiveMind(hive_config)
@@ -1306,6 +1311,51 @@ def speak(ctx, task, no_save):
         console.print("\n[dim red]State saved to PostgreSQL[/dim red]")
 
     console.print()
+
+
+# ============================================================
+# HEARTBEAT COMMANDS
+# ============================================================
+
+
+@cli.group()
+def heartbeat():
+    """Heartbeat scheduler commands."""
+
+
+@heartbeat.command("tick")
+@click.option("--max-goals", type=int, default=3, show_default=True, help="Goals per tick")
+@click.option("--queue-path", type=click.Path(), default=None, help="Override goal queue path")
+def heartbeat_tick(max_goals: int, queue_path: Optional[str]):
+    """Run a single heartbeat tick suitable for cron."""
+    from vecna.orchestrator.autonomy import AutonomyLoop
+    from vecna.orchestrator.goal_queue import GoalQueue
+    from vecna.orchestrator.heartbeat import HeartbeatConfig, HeartbeatRunner
+
+    resolved_queue_path = (
+        Path(queue_path).expanduser()
+        if queue_path
+        else Path.home() / ".vecna" / "autonomy_queue.jsonl"
+    )
+    queue = GoalQueue(path=resolved_queue_path)
+    runner = HeartbeatRunner(
+        autonomy_loop=AutonomyLoop(),
+        goal_queue=queue,
+        config=HeartbeatConfig(max_goals_per_tick=max_goals),
+    )
+
+    summary = asyncio.run(runner.tick())
+    click.echo(
+        "status={status} popped={popped} executed={executed} completed={completed} "
+        "failed={failed} skipped={skipped}".format(
+            status=summary["status"],
+            popped=summary["goals_popped"],
+            executed=summary["goals_executed"],
+            completed=summary["goals_completed"],
+            failed=summary["goals_failed"],
+            skipped=summary["goals_skipped"],
+        )
+    )
 
 
 # ============================================================

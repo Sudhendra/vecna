@@ -137,9 +137,9 @@ async def main():
     hive = HiveMind()
     
     # Add models (they become ONE mind)
-    hive.add_openai("gpt-4o", domain="general")
-    hive.add_anthropic("claude-sonnet-4-20250514", domain="science")
-    hive.add_groq("llama-3.1-70b-versatile", domain="code")
+    hive.add_copilot("gpt-4o", name="copilot-general", domain="general")
+    hive.add_groq("llama-3.1-70b-versatile", name="groq-code", domain="code")
+    hive.add_ollama("llama3.1:8b", name="ollama-local", domain="science")
     
     # The hive thinks as ONE
     response = await hive.think("""
@@ -164,8 +164,9 @@ asyncio.run(main())
 | [Configuration](configuration/index.md) | HiveConfig, ConsensusConfig, environment |
 | [Usage Guides](guides/index.md) | Workflows, patterns, and best practices |
 | [API Reference](api/index.md) | Complete API documentation |
-| [Operations](operations/index.md) | Deployment, scaling, monitoring |
-| [Security](security/index.md) | Threat model, auth, hardening |
+| [Operations: Autonomy Heartbeat](operations/autonomy-heartbeat.md) | One-shot heartbeat usage, scheduling, and queue controls |
+| [Security: Tooling Hardening](security/tooling-hardening.md) | Seccomp, container TTL, and redaction controls |
+| [Observability: Safety Regressions](observability/safety-regressions.md) | Safety regression suite scope and test commands |
 | [Troubleshooting](troubleshooting/index.md) | Common issues and diagnostics |
 | [Developer Guide](developer/index.md) | Contributing, testing, releases |
 | [Appendix](appendix/index.md) | Glossary, compatibility, licenses |

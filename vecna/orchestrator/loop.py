@@ -123,6 +123,9 @@ class HiveConfig:
     # Persist identity events to PG on significant changes
     persist_identity_events: bool = True
 
+    # Enable identity growth updates from repeated beliefs
+    enable_identity_growth: bool = False
+
     # Memory summary token limit
     memory_summary_token_limit: int = 4000
 
@@ -137,6 +140,9 @@ class HiveConfig:
     rewoo_retry_limit: int = 1
     rewoo_backoff_base_seconds: float = 0.25
     rewoo_max_artifact_chars: int = 4000
+    rewoo_policy_denied_behavior: str = "fail_step"
+    rewoo_artifact_injection_mode: str = "final_summary"
+    rewoo_use_separate_synthesizer: bool = False
 
     # ReWOO eligibility tuning
     rewoo_min_task_words: int = 8
@@ -357,7 +363,11 @@ class HiveLoop:
                     # === SELF-REFLECTION ===
                     if should_trace_pipeline():
                         with trace_span("identity.reflect") as span:
-                            identity_event = reflect(self.state, task)
+                            identity_event = reflect(
+                                self.state,
+                                task,
+                                enable_identity_growth=self.config.enable_identity_growth,
+                            )
                             if identity_event and self.state.self_model:
                                 span.set_metadata(
                                     {
@@ -367,7 +377,11 @@ class HiveLoop:
                                     }
                                 )
                     else:
-                        identity_event = reflect(self.state, task)
+                        identity_event = reflect(
+                            self.state,
+                            task,
+                            enable_identity_growth=self.config.enable_identity_growth,
+                        )
 
                     if identity_event and self.config.verbose and self.state.self_model:
                         logger.info(
@@ -702,18 +716,53 @@ class HiveLoop:
             )
 
         planner_adapter = self.adapters[0] if self.adapters else None
+        synthesizer_adapter = None
+        if self.config.rewoo_use_separate_synthesizer and len(self.adapters) > 1:
+            synthesizer_adapter = self.adapters[1]
         engine = RewooEngine(
             runtime=self.tool_runtime,
             registry=self.tool_registry,
             planner_adapter=planner_adapter,
+            synthesizer_adapter=synthesizer_adapter,
             config=RewooEngineConfig(
                 max_steps=self.config.rewoo_max_steps,
                 retry_limit=self.config.rewoo_retry_limit,
                 backoff_base_seconds=self.config.rewoo_backoff_base_seconds,
                 max_artifact_chars=self.config.rewoo_max_artifact_chars,
+                policy_denied_behavior=self.config.rewoo_policy_denied_behavior,
+                artifact_injection_mode=self.config.rewoo_artifact_injection_mode,
             ),
         )
-        return await engine.run(task, self.state, ToolExecutionContext(session_id=session_id))
+        result = await engine.run(task, self.state, ToolExecutionContext(session_id=session_id))
+        if (
+            result.used_rewoo
+            and result.execution is not None
+            and self.config.rewoo_artifact_injection_mode == "per_step"
+        ):
+            self._inject_rewoo_artifacts_into_memory_summary(result)
+        return result
+
+    def _inject_rewoo_artifacts_into_memory_summary(self, result: RewooExecutionResult) -> None:
+        """Inject successful ReWOO artifacts into memory summary."""
+        execution = result.execution
+        if execution is None:
+            return
+
+        artifact_lines: List[str] = []
+        for step_result in execution.results:
+            if step_result.status != "succeeded":
+                continue
+            artifact = execution.artifacts.get(step_result.step_id, "")
+            artifact_lines.append(f"[REWOO_ARTIFACT] {step_result.step_id}: {artifact}")
+
+        if not artifact_lines:
+            return
+
+        block = "\n".join(artifact_lines)
+        if self.state.memory_summary:
+            self.state.memory_summary = f"{self.state.memory_summary}\n{block}"
+        else:
+            self.state.memory_summary = block
 
     def _is_rewoo_eligible(self, task: str) -> bool:
         """Heuristic gate for routing tasks through ReWOO."""
@@ -823,7 +872,11 @@ class HiveLoop:
             )
 
             # Self-reflection after consensus
-            identity_event = reflect(self.state, task)
+            identity_event = reflect(
+                self.state,
+                task,
+                enable_identity_growth=self.config.enable_identity_growth,
+            )
 
             # Persist identity event to PG if configured and significant
             if identity_event and self.config.persist_identity_events and self._state_manager:

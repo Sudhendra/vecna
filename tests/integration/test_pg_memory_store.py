@@ -521,6 +521,55 @@ class TestMemoryEdges:
             assert weight > 0
 
 
+def test_get_related_items_respects_max_depth(pg_memory_store: PgMemoryStore):
+    """Test max_depth traversal for related items graph walk."""
+    batch_id = str(uuid.uuid4())[:8]
+
+    item_a = MemoryItem(
+        content=f"Depth test A [{batch_id}]",
+        item_type="fact",
+        confidence=0.9,
+        domain="logic",
+        source_model="test",
+        metadata={"batch_id": batch_id, "label": "A"},
+    )
+    item_b = MemoryItem(
+        content=f"Depth test B [{batch_id}]",
+        item_type="fact",
+        confidence=0.9,
+        domain="logic",
+        source_model="test",
+        metadata={"batch_id": batch_id, "label": "B"},
+    )
+    item_c = MemoryItem(
+        content=f"Depth test C [{batch_id}]",
+        item_type="fact",
+        confidence=0.9,
+        domain="logic",
+        source_model="test",
+        metadata={"batch_id": batch_id, "label": "C"},
+    )
+
+    item_ids = pg_memory_store.add_items_batch([item_a, item_b, item_c])
+    item_a_id, item_b_id, item_c_id = item_ids
+
+    pg_memory_store.add_edge(
+        MemoryEdge(source_id=item_a_id, target_id=item_b_id, relation="supports", weight=0.9)
+    )
+    pg_memory_store.add_edge(
+        MemoryEdge(source_id=item_b_id, target_id=item_c_id, relation="supports", weight=0.8)
+    )
+
+    depth_1_related = pg_memory_store.get_related_items(item_a_id, max_depth=1)
+    depth_2_related = pg_memory_store.get_related_items(item_a_id, max_depth=2)
+
+    depth_1_ids = {item.id for item, _, _ in depth_1_related}
+    depth_2_ids = {item.id for item, _, _ in depth_2_related}
+
+    assert depth_1_ids == {item_b_id}
+    assert depth_2_ids == {item_b_id, item_c_id}
+
+
 # ============================================================
 # EPISODIC EVENT TESTS
 # ============================================================

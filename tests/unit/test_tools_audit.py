@@ -14,6 +14,53 @@ def test_audit_logger_writes_event(tmp_path: Path):
     assert log_path.read_text().strip().startswith("{")
 
 
+def test_audit_logger_redacts_payload_when_enabled(tmp_path: Path):
+    log_path = tmp_path / "audit.jsonl"
+    logger = ToolAuditLogger(log_path=log_path, redact=True)
+    event = ToolAuditEvent(
+        tool_name="python_exec",
+        action="allow",
+        risk_tier="low",
+        reason="user approved",
+        payload={
+            "token": "sk-live_abc123",
+            "email": "alice@example.com",
+            "nested": {"password": "supersecret"},
+        },
+    )
+
+    logger.log_event(event)
+
+    line = log_path.read_text(encoding="utf-8").splitlines()[0]
+    logged = json.loads(line)
+    payload_text = json.dumps(logged["payload"])
+    assert "sk-live_abc123" not in payload_text
+    assert "alice@example.com" not in payload_text
+    assert "supersecret" not in payload_text
+
+
+def test_audit_logger_redacts_reason_and_error_when_enabled(tmp_path: Path):
+    log_path = tmp_path / "audit.jsonl"
+    logger = ToolAuditLogger(log_path=log_path, redact=True)
+    event = ToolAuditEvent(
+        tool_name="python_exec",
+        action="deny",
+        risk_tier="high",
+        reason="token=sk-live_abc123 email alice@example.com",
+        error="password=supersecret phone 415-555-2671",
+    )
+
+    logger.log_event(event)
+
+    line = log_path.read_text(encoding="utf-8").splitlines()[0]
+    logged = json.loads(line)
+    event_text = json.dumps(logged)
+    assert "sk-live_abc123" not in event_text
+    assert "alice@example.com" not in event_text
+    assert "supersecret" not in event_text
+    assert "415-555-2671" not in event_text
+
+
 def test_approval_store_round_trip(tmp_path: Path):
     store = ApprovalStore(path=tmp_path / "approvals.jsonl")
     req = store.request_approval(tool_name="python_exec", args={"code": "print(1)"})

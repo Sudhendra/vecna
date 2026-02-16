@@ -1,3 +1,5 @@
+"""File-backed FIFO goal queue used by current autonomy tests."""
+
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -29,3 +31,6 @@ class GoalQueue:
             handle.writelines(remaining)
 
         return json.loads(first)
+
+
+FileGoalQueue = GoalQueue

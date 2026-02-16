@@ -374,6 +374,9 @@ class VecnaConfig:
 
     # Agent autonomy settings
     agent_mode: AgentMode = AgentMode.assistant
+    enable_autonomy_heartbeat: bool = False
+    heartbeat_interval_seconds: int = 900
+    heartbeat_jitter_seconds: int = 90
 
     # ReWOO planning settings
     enable_rewoo_planning: bool = False
@@ -381,6 +384,18 @@ class VecnaConfig:
     rewoo_retry_limit: int = 1
     rewoo_backoff_base_seconds: float = 0.25
     rewoo_max_artifact_chars: int = 4000
+    rewoo_policy_denied_behavior: str = "fail_step"
+    rewoo_artifact_injection_mode: str = "final_summary"
+    rewoo_use_separate_synthesizer: bool = False
+    rewoo_min_task_words: int = 8
+    rewoo_force: bool = False
+
+    # Tooling feature flags and quotas
+    enable_web_tools: bool = False
+    enable_fs_tools: bool = False
+    tool_quota_per_session: int = 0
+    tool_quota_per_tool: int = 0
+    tool_allowed_fs_roots: List[str] = field(default_factory=lambda: ["~/.vecna"])
 
     # Version for schema migrations
     config_version: int = 2
@@ -414,6 +429,17 @@ class VecnaConfig:
             return self.personas.get(model.persona_override)
         return self.get_active_persona()
 
+    @staticmethod
+    def _normalize_tool_allowed_fs_roots(value: Any) -> List[str]:
+        if isinstance(value, str):
+            return [value]
+
+        if isinstance(value, list):
+            normalized = [item for item in value if isinstance(item, str)]
+            return normalized or ["~/.vecna"]
+
+        return ["~/.vecna"]
+
     def to_dict(self) -> Dict[str, Any]:
         agent_mode = self.agent_mode
         if isinstance(agent_mode, str):
@@ -445,6 +471,9 @@ class VecnaConfig:
             "use_routing": self.use_routing,
             "auto_execute_code": self.auto_execute_code,
             "agent_mode": agent_mode.value,
+            "enable_autonomy_heartbeat": self.enable_autonomy_heartbeat,
+            "heartbeat_interval_seconds": self.heartbeat_interval_seconds,
+            "heartbeat_jitter_seconds": self.heartbeat_jitter_seconds,
             "auto_execute_tools": self.auto_execute_tools,
             "tool_policy": self.tool_policy.to_dict(),
             "enable_rewoo_planning": self.enable_rewoo_planning,
@@ -452,6 +481,18 @@ class VecnaConfig:
             "rewoo_retry_limit": self.rewoo_retry_limit,
             "rewoo_backoff_base_seconds": self.rewoo_backoff_base_seconds,
             "rewoo_max_artifact_chars": self.rewoo_max_artifact_chars,
+            "rewoo_policy_denied_behavior": self.rewoo_policy_denied_behavior,
+            "rewoo_artifact_injection_mode": self.rewoo_artifact_injection_mode,
+            "rewoo_use_separate_synthesizer": self.rewoo_use_separate_synthesizer,
+            "rewoo_min_task_words": self.rewoo_min_task_words,
+            "rewoo_force": self.rewoo_force,
+            "enable_web_tools": self.enable_web_tools,
+            "enable_fs_tools": self.enable_fs_tools,
+            "tool_quota_per_session": self.tool_quota_per_session,
+            "tool_quota_per_tool": self.tool_quota_per_tool,
+            "tool_allowed_fs_roots": self._normalize_tool_allowed_fs_roots(
+                self.tool_allowed_fs_roots
+            ),
         }
 
     @classmethod
@@ -486,6 +527,12 @@ class VecnaConfig:
                     agent_mode,
                 )
                 agent_mode = AgentMode.assistant
+        elif not isinstance(agent_mode, AgentMode):
+            logger.warning(
+                "Invalid agent_mode '%s' in config; defaulting to 'assistant'",
+                agent_mode,
+            )
+            agent_mode = AgentMode.assistant
         tool_policy_data = data.get("tool_policy")
         tool_policy = (
             ToolPolicyConfig.from_dict(tool_policy_data)
@@ -509,6 +556,9 @@ class VecnaConfig:
             use_routing=data.get("use_routing", True),
             auto_execute_code=data.get("auto_execute_code", True),
             agent_mode=agent_mode,
+            enable_autonomy_heartbeat=data.get("enable_autonomy_heartbeat", False),
+            heartbeat_interval_seconds=data.get("heartbeat_interval_seconds", 900),
+            heartbeat_jitter_seconds=data.get("heartbeat_jitter_seconds", 90),
             auto_execute_tools=auto_execute_tools,
             tool_policy=tool_policy,
             enable_rewoo_planning=data.get("enable_rewoo_planning", False),
@@ -516,6 +566,20 @@ class VecnaConfig:
             rewoo_retry_limit=data.get("rewoo_retry_limit", 1),
             rewoo_backoff_base_seconds=data.get("rewoo_backoff_base_seconds", 0.25),
             rewoo_max_artifact_chars=data.get("rewoo_max_artifact_chars", 4000),
+            rewoo_policy_denied_behavior=data.get("rewoo_policy_denied_behavior", "fail_step"),
+            rewoo_artifact_injection_mode=data.get(
+                "rewoo_artifact_injection_mode", "final_summary"
+            ),
+            rewoo_use_separate_synthesizer=data.get("rewoo_use_separate_synthesizer", False),
+            rewoo_min_task_words=data.get("rewoo_min_task_words", 8),
+            rewoo_force=data.get("rewoo_force", False),
+            enable_web_tools=data.get("enable_web_tools", False),
+            enable_fs_tools=data.get("enable_fs_tools", False),
+            tool_quota_per_session=data.get("tool_quota_per_session", 0),
+            tool_quota_per_tool=data.get("tool_quota_per_tool", 0),
+            tool_allowed_fs_roots=cls._normalize_tool_allowed_fs_roots(
+                data.get("tool_allowed_fs_roots", ["~/.vecna"])
+            ),
             config_version=data.get("config_version", 1),
         )
 

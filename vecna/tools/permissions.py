@@ -1,7 +1,7 @@
 import ast
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List
+from typing import Any, Dict, List
 
 
 class RiskTier(str, Enum):
@@ -79,5 +79,22 @@ def assess_code_risk(code: str) -> RiskTier:
             if isinstance(node.func, ast.Name):
                 if node.func.id in risky_names:
                     return RiskTier.HIGH
+
+    return RiskTier.LOW
+
+
+def assess_tool_risk(tool_name: str, args: Any) -> RiskTier:
+    if not isinstance(args, dict):
+        return RiskTier.MEDIUM
+
+    if tool_name == "python_exec":
+        return assess_code_risk(str(args.get("code", "")))
+
+    if tool_name == "http_request":
+        method = str(args.get("method", "GET")).upper()
+        return RiskTier.LOW if method in {"GET", "HEAD"} else RiskTier.MEDIUM
+
+    if tool_name.startswith("fs_"):
+        return RiskTier.MEDIUM
 
     return RiskTier.LOW

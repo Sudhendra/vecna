@@ -48,7 +48,9 @@ class _FakeSessionManager:
         self.end_payload = payload
 
 
-def _build_loop(enable_rewoo_planning: bool) -> HiveLoop:
+def _build_loop(
+    enable_rewoo_planning: bool, rewoo_artifact_injection_mode: str = "final_summary"
+) -> HiveLoop:
     config = HiveConfig(
         use_pg_memory=False,
         use_semantic_memory=False,
@@ -57,6 +59,7 @@ def _build_loop(enable_rewoo_planning: bool) -> HiveLoop:
         verbose=False,
         enable_rewoo_planning=enable_rewoo_planning,
         rewoo_force=enable_rewoo_planning,
+        rewoo_artifact_injection_mode=rewoo_artifact_injection_mode,
     )
     return HiveLoop(config=config, adapters=[_DummyAdapter()])
 
@@ -152,6 +155,27 @@ Final: done
     assert response == "legacy-fallback"
 
 
+def test_hive_loop_falls_back_to_legacy_when_rewoo_planner_raises_runtime_error(monkeypatch):
+    loop = _build_loop(enable_rewoo_planning=True)
+
+    async def fake_ensure_session_manager(initial_query=None):
+        return None
+
+    async def fake_run_cycle(task):
+        return ["legacy-fallback"], [HiveUpdate(source_model="dummy")]
+
+    async def boom_generate(prompt):
+        raise RuntimeError("planner exploded")
+
+    monkeypatch.setattr(loop, "_ensure_session_manager", fake_ensure_session_manager)
+    monkeypatch.setattr(loop, "_run_cycle", fake_run_cycle)
+    monkeypatch.setattr(loop.adapters[0], "generate", boom_generate)
+
+    response = asyncio.run(loop.think("complex multi step task"))
+
+    assert response == "legacy-fallback"
+
+
 def test_hive_loop_rewoo_appends_execution_summary_to_session_log(monkeypatch):
     loop = _build_loop(enable_rewoo_planning=True)
     fake_session = _FakeSessionManager()
@@ -212,3 +236,32 @@ E1: echo[{"text":"ok"}]
 
     assert "Successful tool outputs" in response
     assert "E1: ok" in response
+
+
+def test_rewoo_artifact_injection_mode_per_step_updates_memory_summary(monkeypatch):
+    loop = _build_loop(enable_rewoo_planning=True, rewoo_artifact_injection_mode="per_step")
+
+    async def fake_ensure_session_manager(initial_query=None):
+        return None
+
+    async def fail_run_cycle(task):
+        raise AssertionError("legacy run cycle should not run when rewoo succeeds")
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="echo", description="echo", input_schema={"text": "string"}),
+        executor=lambda args, ctx: ToolResult("echo", True, args["text"]),
+    )
+    loop.tool_registry = registry
+    loop.tool_runtime = ToolRuntime(
+        registry=registry,
+        permission_manager=ToolPermissionManager(ToolPolicy()),
+    )
+
+    monkeypatch.setattr(loop, "_ensure_session_manager", fake_ensure_session_manager)
+    monkeypatch.setattr(loop, "_run_cycle", fail_run_cycle)
+
+    response = asyncio.run(loop.think("complex task"))
+
+    assert "Task: complex task" in response
+    assert "[REWOO_ARTIFACT] E1: ok" in loop.state.memory_summary

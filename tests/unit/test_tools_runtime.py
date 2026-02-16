@@ -2,6 +2,7 @@ import pytest
 
 from vecna.tools.approvals import ApprovalStore
 from vecna.tools.permissions import RiskTier, ToolPermissionManager, ToolPolicy
+from vecna.tools.quotas import QuotaConfig, ToolQuotaManager
 from vecna.tools.registry import ToolRegistry
 from vecna.tools.runtime import ToolRuntime
 from vecna.tools.types import ToolExecutionContext, ToolResult, ToolSpec
@@ -113,8 +114,78 @@ async def test_runtime_requires_approval_for_low_risk_when_policy_asks(tmp_path)
     modified, results = await runtime.execute_calls(text, ToolExecutionContext())
 
     assert results[0].success is False
+    assert results[0].error is not None
     assert results[0].error.startswith("approval required:")
     assert "<TOOL_RESULT" in modified
     pending = store.get_pending()
     assert len(pending) == 1
     assert pending[0].tool_name == "echo"
+
+
+@pytest.mark.asyncio
+async def test_runtime_uses_tool_specific_risk_for_http_request(tmp_path):
+    registry = ToolRegistry()
+    spec = ToolSpec(name="http_request", description="http", input_schema={"method": "string"})
+    registry.register(spec, executor=lambda args, ctx: ToolResult("http_request", True, "ok"))
+    policy = ToolPolicy(risk_actions={RiskTier.LOW: "allow", RiskTier.MEDIUM: "ask"})
+    store = ApprovalStore(path=tmp_path / "approvals.jsonl")
+    runtime = ToolRuntime(
+        registry=registry,
+        permission_manager=ToolPermissionManager(policy),
+        approval_store=store,
+    )
+
+    text = '<TOOL_CALL>{"name":"http_request","args":{"method":"POST"}}</TOOL_CALL>'
+    modified, results = await runtime.execute_calls(text, ToolExecutionContext())
+
+    assert results[0].success is False
+    assert results[0].error is not None
+    assert results[0].error.startswith("approval required:")
+    assert "<TOOL_RESULT" in modified
+    pending = store.get_pending()
+    assert len(pending) == 1
+    assert pending[0].tool_name == "http_request"
+
+
+@pytest.mark.asyncio
+async def test_runtime_handles_malformed_http_request_args_without_crashing():
+    registry = ToolRegistry()
+    spec = ToolSpec(name="http_request", description="http", input_schema={"method": "string"})
+    registry.register(spec, executor=lambda args, ctx: ToolResult("http_request", True, "ok"))
+    policy = ToolPolicy(risk_actions={RiskTier.MEDIUM: "allow"})
+    runtime = ToolRuntime(registry=registry, permission_manager=ToolPermissionManager(policy))
+
+    text = '<TOOL_CALL>{"name":"http_request","args":"bad-args"}</TOOL_CALL>'
+    modified, results = await runtime.execute_calls(text, ToolExecutionContext())
+
+    assert results[0].success is True
+    assert results[0].output == "ok"
+    assert "<TOOL_RESULT" in modified
+
+
+def test_tool_execution_context_defaults_allowed_fs_roots():
+    context = ToolExecutionContext()
+    assert context.allowed_fs_roots == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_returns_quota_exceeded_error_when_limit_hit():
+    registry = ToolRegistry()
+    spec = ToolSpec(name="echo", description="echo", input_schema={"text": "string"})
+    registry.register(spec, executor=lambda args, ctx: ToolResult("echo", True, args["text"]))
+    quota_manager = ToolQuotaManager(QuotaConfig(per_session=1, per_tool=0))
+    runtime = ToolRuntime(
+        registry=registry,
+        permission_manager=ToolPermissionManager(ToolPolicy()),
+        quota_manager=quota_manager,
+    )
+    context = ToolExecutionContext(session_id="session-1")
+
+    first_text = '<TOOL_CALL>{"name":"echo","args":{"text":"one"}}</TOOL_CALL>'
+    _, first_results = await runtime.execute_calls(first_text, context)
+    assert first_results[0].success is True
+
+    second_text = '<TOOL_CALL>{"name":"echo","args":{"text":"two"}}</TOOL_CALL>'
+    _, second_results = await runtime.execute_calls(second_text, context)
+    assert second_results[0].success is False
+    assert second_results[0].error == "quota exceeded"

@@ -14,6 +14,7 @@ from vecna.adapters.base import BaseAdapter
 from vecna.core.hive_state import HiveState
 from vecna.observability.langfuse import trace_span
 from vecna.tools.registry import ToolRegistry
+from vecna.tools.router import ToolRouter
 from vecna.tools.runtime import ToolRuntime
 from vecna.tools.types import ToolExecutionContext, ToolResult
 
@@ -96,6 +97,8 @@ class RewooEngineConfig:
     retry_limit: int = 1
     backoff_base_seconds: float = 0.25
     max_artifact_chars: int = 4000
+    policy_denied_behavior: str = "fail_step"
+    artifact_injection_mode: str = "final_summary"
 
 
 class RewooEngine:
@@ -105,12 +108,16 @@ class RewooEngine:
         self,
         runtime: ToolRuntime,
         registry: ToolRegistry,
+        router: Optional[ToolRouter] = None,
         planner_adapter: Optional[BaseAdapter] = None,
+        synthesizer_adapter: Optional[BaseAdapter] = None,
         config: Optional[RewooEngineConfig] = None,
     ) -> None:
         self.runtime = runtime
         self.registry = registry
+        self.router = router or ToolRouter()
         self.planner_adapter = planner_adapter
+        self.synthesizer_adapter = synthesizer_adapter
         self.config = config or RewooEngineConfig()
 
     async def create_plan(self, task: str, state: HiveState) -> RewooPlan:
@@ -152,6 +159,9 @@ class RewooEngine:
         if unknown:
             raise ValueError(f"Unknown tools in plan: {', '.join(unknown)}")
 
+        for step in plan.steps:
+            _validate_step_input_json(step)
+
     def render_step_input(self, raw_input: str, artifacts: Dict[str, str]) -> str:
         """Render a step input template by replacing `#E*` artifacts."""
         return render_step_input(raw_input, artifacts)
@@ -165,6 +175,7 @@ class RewooEngine:
             retry_limit=self.config.retry_limit,
             backoff_base_seconds=self.config.backoff_base_seconds,
             max_artifact_chars=self.config.max_artifact_chars,
+            policy_denied_behavior=self.config.policy_denied_behavior,
         )
 
     async def synthesize_answer(self, task: str, execution: RewooExecution) -> str:
@@ -179,10 +190,11 @@ class RewooEngine:
                 "policy_denials": execution.policy_denials,
             },
         ) as span:
-            if self.planner_adapter is not None:
+            synthesis_adapter = self.synthesizer_adapter or self.planner_adapter
+            if synthesis_adapter is not None:
                 prompt = self._build_synthesis_prompt(task, execution)
                 try:
-                    response = await self.planner_adapter.generate(prompt)
+                    response = await synthesis_adapter.generate(prompt)
                 except Exception as exc:
                     logger.warning("ReWOO synthesis adapter call failed: %s", exc)
                 else:
@@ -205,7 +217,11 @@ class RewooEngine:
         """Run full plan -> execute -> synthesize flow with fallback semantics."""
         try:
             plan = await self.create_plan(task, state)
-        except ValueError as exc:
+            execution = await self.execute_plan(plan, context)
+            answer = await self.synthesize_answer(task, execution)
+            return RewooExecutionResult(answer=answer, execution=execution, used_rewoo=True)
+        except Exception as exc:
+            logger.warning("ReWOO run failed, falling back to legacy path: %s", exc)
             return RewooExecutionResult(
                 answer="",
                 execution=None,
@@ -213,17 +229,14 @@ class RewooEngine:
                 fallback_reason=str(exc),
             )
 
-        execution = await self.execute_plan(plan, context)
-        answer = await self.synthesize_answer(task, execution)
-        return RewooExecutionResult(answer=answer, execution=execution, used_rewoo=True)
-
     async def _generate_plan_text(self, task: str, state: HiveState) -> str:
         """Generate raw plan text from adapter, with deterministic fallback."""
         if self.planner_adapter is None:
             return self._fallback_plan_text(task)
 
         tool_specs = self.registry.list_tools()
-        tool_names = [spec.name for spec in tool_specs]
+        ranked_specs = self.router.rank_specs_for_query(tool_specs, task)
+        tool_names = [spec.name for spec in ranked_specs]
         prompt = self._build_planner_prompt(task, state, tool_names)
 
         response = await self.planner_adapter.generate(prompt)
@@ -244,6 +257,8 @@ class RewooEngine:
             "- Use only listed tools.\n"
             "- Keep steps contiguous E1..En.\n"
             "- References must point to prior steps only.\n"
+            '- <input> must be valid JSON object (e.g. {"query":"topic"}).\n'
+            "- #E1 must appear only inside JSON string values, never as raw JSON tokens.\n"
             f"Available tools: {available}\n"
             f"Task: {task}\n"
             f"State memory excerpt: {state.memory_summary[:1000]}"
@@ -420,6 +435,17 @@ def _validate_step_references(steps: List[RewooPlanStep]) -> None:
         seen_ids.add(step.step_id)
 
 
+def _validate_step_input_json(step: RewooPlanStep) -> None:
+    """Ensure each step input is valid JSON and represented as an object."""
+    try:
+        parsed_input = json.loads(step.raw_input)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON input for {step.step_id}: {exc.msg}") from exc
+
+    if not isinstance(parsed_input, dict):
+        raise ValueError(f"JSON input for {step.step_id} must be an object")
+
+
 def _validate_final_references(final_template: str, steps: List[RewooPlanStep]) -> None:
     """Ensure final template only references existing steps."""
     valid = {step.step_id for step in steps}
@@ -458,6 +484,7 @@ async def execute_rewoo_plan(
     retry_limit: int = 0,
     backoff_base_seconds: float = 0.25,
     max_artifact_chars: Optional[int] = None,
+    policy_denied_behavior: str = "fail_step",
 ) -> RewooExecution:
     """Execute ReWOO plan steps through ToolRuntime and collect artifacts."""
     execution = RewooExecution(
@@ -469,6 +496,7 @@ async def execute_rewoo_plan(
     )
     consecutive_failures = 0
     circuit_open = False
+    skip_reason = "skipped due to consecutive failures"
 
     for step in plan.steps:
         if circuit_open:
@@ -479,7 +507,7 @@ async def execute_rewoo_plan(
                     status="skipped",
                     rendered_input=step.raw_input,
                     attempts=0,
-                    error="skipped due to consecutive failures",
+                    error=skip_reason,
                     status_history=["pending", "skipped"],
                     started_at=now,
                     ended_at=now,
@@ -597,6 +625,9 @@ async def execute_rewoo_plan(
             )
             if policy_denied:
                 execution.policy_denials += 1
+                if policy_denied_behavior == "abort_plan":
+                    circuit_open = True
+                    skip_reason = "skipped due to policy denial"
             step_span.set_metadata(
                 {
                     "status": "failed",
