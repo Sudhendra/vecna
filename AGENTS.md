@@ -1,172 +1,155 @@
-# AGENTS.md - Vecna Codebase Guide for AI Agents
+# AGENTS.md - Vecna
 
-## Project Overview
+## What This Is
 
 Vecna (Virtual Emergent Collective Neural Architecture) is a Python hive-mind orchestrator
-for AI models. It manages shared mental state, consensus, memory (PostgreSQL + pgvector + Redis),
-and adapters for multiple LLM providers (Copilot, Groq, Ollama, local HuggingFace models).
+for AI models. Shared mental state, consensus, memory (PostgreSQL + pgvector + Redis),
+adapters for multiple LLM providers (Copilot, Groq, Ollama, local HuggingFace, OpenAI, Anthropic).
 
-## Build & Install
+Key concepts: Primary Cortex (hierarchy, not democracy), HumanModel (learned user preferences),
+DreamLoop (autonomous background processing), Cognitive Substrate (unified mental state).
+
+---
+
+## Engineering Preferences
+
+These are non-negotiable and guide every decision:
+
+- **DRY** — flag repetition aggressively. If logic exists in two places, extract it.
+- **Well-tested** — more tests > fewer tests. Every new feature needs tests first (TDD).
+- **"Engineered enough"** — not fragile/hacky, not prematurely abstracted. Find the middle.
+- **Edge cases matter** — handle more, not fewer. Thoughtfulness > speed.
+- **Explicit over clever** — if it needs a comment to explain, simplify it.
+- **Errors never pass silently** — specific exceptions, never bare `except:`.
+
+When reviewing or changing code, evaluate: architecture (boundaries, coupling, data flow),
+code quality (DRY, error handling, edge cases), tests (coverage, assertions, failure modes),
+performance (N+1 queries, memory, caching). For each issue: describe with file references,
+present 2-3 options with tradeoffs, recommend one, ask before proceeding.
+
+Do not assume my priorities on timeline or scale.
+
+---
+
+## Build, Test, Lint
 
 ```bash
-pip install -e ".[dev,postgres]"          # Dev install with all test deps
-pip install -e ".[all]"                   # Everything including local models
-```
-
-## Lint & Format
-
-```bash
+pip install -e ".[dev,postgres]"          # Dev install
+pytest                                    # All tests
+pytest tests/unit/                        # Unit only
+pytest tests/integration/                 # Needs Postgres + Redis
+pytest -k "test_add_fact"                 # Single test by keyword
 ruff check .                              # Lint (CI-enforced)
-ruff format --check .                     # Format check (CI-enforced)
-ruff check --fix .                        # Auto-fix lint issues
-ruff format .                             # Auto-format
+ruff format --check .                     # Format (CI-enforced)
+alembic upgrade head                      # Apply migrations
 ```
 
-Ruff is the primary tool. Black is also configured but CI only runs Ruff.
-Line length: **100 characters**. Target: **Python 3.10+**.
+Ruff is the only CI-enforced tool. Line length: **100 chars**. Target: **Python 3.10+**.
+**asyncio_mode = auto** — no `@pytest.mark.asyncio` needed.
 
-## Test Commands
+Test markers: `unit`, `integration`, `e2e` (auto-applied by path), `requires_postgres`,
+`requires_redis`, `requires_docker`, `requires_copilot`, `requires_langfuse`.
 
-```bash
-pytest                                    # Run all tests (verbose, short traceback)
-pytest tests/unit/                        # Unit tests only
-pytest tests/integration/                 # Integration tests (needs Postgres + Redis)
-pytest tests/e2e/                         # End-to-end CLI tests
-pytest -m unit                            # Run by marker
-pytest -m "not requires_docker"           # Skip Docker-dependent tests
+---
 
-# Single test file
-pytest tests/unit/test_hive_state.py
+## TDD Workflow
 
-# Single test function
-pytest tests/unit/test_hive_state.py::TestFactOperations::test_add_fact
+1. Write failing tests first
+2. Implement minimal code to pass
+3. Verify: `pytest` passes, `ruff check .` clean, `ruff format --check .` clean
+4. Commit: small, focused, per feature/fix
 
-# Single test by keyword
-pytest -k "test_add_fact"
+---
 
-# CI command (skips external service tests)
-pytest -v -m "not requires_docker and not requires_copilot and not requires_langfuse"
-```
+## Code Conventions
 
-**asyncio_mode = auto** -- async test functions are detected automatically, no decorator needed.
+**Imports:** Module docstring first. Three groups separated by blank lines: stdlib, third-party, local.
 
-### Test Markers
+**Types:** Use `typing` module style (`List[str]`, `Optional[int]`, not `list[str]`).
+All function signatures have type hints. Use `@dataclass` for structured data, not Pydantic.
 
-- `unit` -- auto-applied to `tests/unit/` (no external services)
-- `integration` -- auto-applied to `tests/integration/`
-- `e2e` -- auto-applied to `tests/e2e/`
-- `requires_postgres`, `requires_redis`, `requires_docker`, `requires_copilot`, `requires_langfuse`
+**Naming:** Files `snake_case.py`, classes `PascalCase`, functions `snake_case`,
+constants `UPPER_SNAKE_CASE`, loggers `logging.getLogger("vecna.<module>")`,
+tests `class TestThing:` with `test_*` methods.
 
-Tests are auto-marked by path in `tests/conftest.py` via `pytest_collection_modifyitems`.
+**Classes:** ABCs for interfaces (`BaseAdapter(ABC)` + `@abstractmethod`),
+dataclasses for data (`field(default_factory=...)` for mutables), enums for finite sets.
 
-### Database Migrations
+**Error handling:** Specific exceptions, never bare `except:`. Logging via `logging.getLogger`,
+never `print()`. Rich for user-facing CLI output. Core orchestration is async; use `aiohttp`, not `requests`.
 
-```bash
-alembic upgrade head                      # Apply all migrations
-```
+**Tests:** Class-based grouping, fixtures in `tests/conftest.py`, mock embedder for CI
+(deterministic 1536-dim vectors), no asyncio decorator needed.
 
-Migrations live in `vecna/migrations/versions/`.
+---
 
-## Code Style Guidelines
-
-### File Structure
-
-Every Python file starts with a module-level docstring:
-```python
-"""PostgreSQL Memory Store with pgvector support."""
-```
-
-### Import Order (3 groups, separated by blank lines)
-
-1. **Standard library** -- `dataclasses`, `typing`, `datetime`, `enum`, `uuid`, `asyncio`, `logging`, `os`, `json`
-2. **Third-party** -- `numpy`, `click`, `rich`, `dotenv`, `yaml`, `aiohttp`
-3. **Local project** -- `from vecna.core.types import ...`
-
-```python
-"""Module docstring."""
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
-from datetime import datetime
-import logging
-
-import numpy as np
-
-from vecna.core.types import HiveUpdate, Goal
-from vecna.adapters.base import BaseAdapter
-```
-
-### Type Annotations
-
-- Use `typing` module style: `List[str]`, `Dict[str, Any]`, `Optional[int]` (not `list[str]`)
-- All function signatures should have type hints
-- Use `@dataclass` extensively for structured data (not Pydantic)
-
-### Naming Conventions
-
-- **Files**: `snake_case.py` (e.g., `hive_state.py`, `pg_store.py`, `dream_loop.py`)
-- **Classes**: `PascalCase` (e.g., `HiveState`, `ConsensusEngine`, `PgMemoryStore`)
-- **Functions/methods**: `snake_case` (e.g., `add_fact`, `should_flush`, `get_identity_context_for_prompt`)
-- **Constants**: `UPPER_SNAKE_CASE` (e.g., `VECNA_BANNER`)
-- **Test classes**: `Test*` prefix (e.g., `TestFactOperations`, `TestBeliefOperations`)
-- **Test functions**: `test_*` prefix
-- **Loggers**: `logging.getLogger("vecna.<module_name>")`
-
-### Class Design
-
-- **ABCs** for interfaces: `BaseAdapter(ABC)` with `@abstractmethod`
-- **Dataclasses** for data: `@dataclass` with `field(default_factory=...)` for mutable defaults
-- **Enums** for finite sets: `class AgentMode(Enum)`, `class RiskTier(Enum)`
-
-### Error Handling
-
-- Errors should never pass silently (see Zen below)
-- Use specific exception types, not bare `except:`
-- Logging via `logging.getLogger("vecna.<module>")` -- never `print()` for diagnostics
-- Rich library for user-facing console output in CLI
-
-### Async Patterns
-
-- `asyncio_mode = auto` in tests -- async functions auto-detected
-- Core orchestration is async (`HiveLoop`, adapters)
-- Use `aiohttp` for HTTP, not `requests`
-
-### Project Layout
+## Project Layout
 
 ```
 vecna/
   adapters/     # LLM provider interfaces (base ABC + implementations)
   auth/         # GitHub/Copilot authentication
-  cli/          # Click CLI + TUI
+  channels/     # Channel adapters (CLI, iMessage, WhatsApp, Slack, Discord)
+  cli/          # Click CLI
   config/       # Configuration schema, loading, factory
-  core/         # HiveState, types (Fact, Belief, Hypothesis, Goal, HiveUpdate)
-  memory/       # Memory tiers: hot (Redis), warm (pgvector), cold (PG episodic)
+  core/         # HiveState, types, HumanModel
+  integrations/ # External services (Google Suite, Composio, Observer)
+  memory/       # Hot (Redis), warm (pgvector), cold (PG episodic)
   migrations/   # Alembic DB migrations
   observability/# Langfuse tracing, token counting
-  orchestrator/ # Consensus, curiosity, goals, mode routing, ReWOO, self-reflection
-  tools/        # Tool registry, permissions, sandboxed execution, parsing
+  orchestrator/ # Consensus, goals, mode routing, ReWOO, thoughtfulness
+  security/     # Encryption at rest, privacy controls
+  server/       # HTTP server (aiohttp), API routes, WebSocket
+  tools/        # Registry, permissions, sandbox, browser, summarizer
+  tui/          # Textual-based TUI
   utils/        # Shared utilities
   visuals/      # ASCII art, boot animations, themes
-  visualizer/   # Substrate visualizer
 tests/
   unit/         # Fast, no external services
   integration/  # Needs Postgres/Redis
-  e2e/          # CLI end-to-end
+  e2e/          # Full stack end-to-end
+  safety/       # Safety constraint tests
+docs/plans/     # Implementation plans — read before feature work
 ```
 
-### Test Style
+---
 
-- Class-based grouping: `class TestFactOperations:` containing related `test_*` methods
-- Fixtures defined in `tests/conftest.py` (session and function-scoped)
-- Mock embedder provided for CI (deterministic 1536-dim vectors, no API key needed)
-- No `@pytest.mark.asyncio` needed -- auto mode is on
+## Dependency Rules
 
-## CI Pipeline (.github/workflows/ci.yml)
+- Optional deps go in `pyproject.toml` extras (server, browser, integrations, security, tui)
+- Core (`vecna/core/`, `vecna/orchestrator/`) must never import from optional extras
+- Use `try: import X except ImportError:` for optional deps at module level
+- All new modules follow ABC pattern: `BaseX(ABC)` with concrete implementations
+- All integrations toggle on/off via config — never hard-fail on missing deps
+- steipete CLIs (imsg, wacli, gogcli, summarize) are subprocess calls, not imports
 
-- **lint** job: Python 3.12, runs `ruff check .` and `ruff format --check .`
-- **tests** job: Matrix across Python 3.10, 3.11, 3.12 with Postgres (pgvector) + Redis services
-- Tests skip: `requires_docker`, `requires_copilot`, `requires_langfuse`
+---
 
-## The Zen of Python (Applied to Vecna)
+## Known Issues (Active)
+
+These are bugs in the current codebase. If you touch these files, fix them:
+
+- `_is_task_complete()` always returns True — `orchestrator/loop.py`
+- `max(responses, key=len)` picks longest, not best — `orchestrator/loop.py`
+- Custom `<HIVE_UPDATE>` YAML parsing is fragile — `adapters/base.py:152-193`
+- Jaccard-only similarity, no semantics — `orchestrator/consensus.py:219-231`
+- File-based GoalQueue (JSONL), not durable — `orchestrator/goal_queue.py`
+
+---
+
+## Implementation Plans
+
+Before starting feature work, read the relevant plan:
+- **Master plan:** `docs/plans/2026-02-16-vecna-master-implementation-plan.md`
+
+It has exact file paths, test code, and step-by-step implementation for 29 tasks
+across three phases (Foundation → Integration → Convergence).
+
+---
+
+## The Zen of Python
+
+A philosophical take on coding principles with python which should be translated directly into your implementation of the code.
 
 ```
 Beautiful is better than ugly.
