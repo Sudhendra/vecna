@@ -65,7 +65,7 @@ class SessionContext(SerializableMixin):
 
 
 @dataclass
-class InboundMessage:
+class InboundMessage(SerializableMixin):
     """An inbound message from a channel.
 
     Attributes:
@@ -82,7 +82,7 @@ class InboundMessage:
 
 
 @dataclass
-class OutboundMessage:
+class OutboundMessage(SerializableMixin):
     """An outbound response to a channel.
 
     Attributes:
