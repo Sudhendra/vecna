@@ -7,7 +7,7 @@ All endpoints follow REST conventions:
 - POST /api/webhooks/ingest  -- Ingest external webhook events
 - WS   /ws/stream            -- WebSocket streaming (authenticated)
 
-Amendment 3: Chat endpoint delegates to MessageRouter when wired (Task 26).
+Amendment 3: Chat endpoint delegates to MessageRouter.route_inbound() (Task 24).
 Amendment 8: All exceptions are caught with specific types.
 """
 
@@ -43,7 +43,7 @@ async def chat(request: web.Request) -> web.Response:
     - session_id (str, optional): Session identifier, defaults to "default"
 
     Amendment 3: Delegates to MessageRouter.route_inbound() when available.
-    Currently returns a placeholder response until wired in Task 26.
+    Falls back to placeholder if no router is wired.
     """
     try:
         data = await request.json()
@@ -56,23 +56,40 @@ async def chat(request: web.Request) -> web.Response:
     if not message or not message.strip():
         return web.json_response({"error": "Message required"}, status=400)
 
-    # Amendment 3: Use message_router when available (wired in Task 26)
+    # Amendment 3: Delegate to MessageRouter.route_inbound() (Task 24)
     router = request.app.get("message_router")
     if router is not None:
+        from vecna.channels.router import InboundMessage, RateLimitError, RoutingError
+
         try:
-            response_text = await router(message, session_id)
+            inbound = InboundMessage(
+                content=message,
+                channel_name="http",
+                session_id=session_id,
+            )
+            outbound = await router.route_inbound(inbound)
             return web.json_response(
                 {
-                    "response": response_text,
+                    "response": outbound.content,
                     "session_id": session_id,
+                    "format_type": outbound.format_type,
                     "timestamp": datetime.now().isoformat(),
                 }
             )
         except asyncio.TimeoutError:
             logger.warning("Chat request timed out for session %s", session_id)
             return web.json_response({"error": "Request timed out"}, status=504)
+        except RateLimitError:
+            logger.warning("Rate limit exceeded for session %s", session_id)
+            return web.json_response({"error": "Rate limit exceeded"}, status=429)
+        except RoutingError as exc:
+            logger.error("Routing error for session %s: %s", session_id, exc)
+            return web.json_response({"error": "Internal routing error"}, status=500)
+        except ValueError as exc:
+            logger.warning("Invalid chat request: %s", exc)
+            return web.json_response({"error": str(exc)}, status=400)
 
-    # Placeholder response until MessageRouter is wired
+    # Placeholder response when no MessageRouter is wired
     return web.json_response(
         {
             "response": f"[Vecna server placeholder] Received: {message}",
@@ -151,10 +168,44 @@ async def ws_stream(request: web.Request) -> web.WebSocketResponse:
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
-                # Echo for now; will wire to MessageRouter in Task 26
-                await ws.send_str(
-                    json.dumps({"echo": msg.data, "timestamp": datetime.now().isoformat()})
-                )
+                # Amendment 3: Delegate to MessageRouter when wired (Task 24)
+                ws_router = request.app.get("message_router")
+                if ws_router is not None:
+                    from vecna.channels.router import InboundMessage
+
+                    inbound = InboundMessage(
+                        content=msg.data,
+                        channel_name="websocket",
+                        session_id=request.query.get("session_id", "ws-default"),
+                    )
+                    try:
+                        outbound = await ws_router.route_inbound(inbound)
+                        await ws.send_str(
+                            json.dumps(
+                                {
+                                    "response": outbound.content,
+                                    "timestamp": datetime.now().isoformat(),
+                                }
+                            )
+                        )
+                    except (ValueError, ImportError) as exc:
+                        await ws.send_str(
+                            json.dumps(
+                                {
+                                    "error": str(exc),
+                                    "timestamp": datetime.now().isoformat(),
+                                }
+                            )
+                        )
+                else:
+                    await ws.send_str(
+                        json.dumps(
+                            {
+                                "echo": msg.data,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                        )
+                    )
             elif msg.type == web.WSMsgType.ERROR:
                 logger.error("WebSocket error: %s", ws.exception())
     except asyncio.CancelledError:

@@ -117,16 +117,18 @@ class TestChatEndpoint:
     async def test_chat_timeout_returns_504(self, aiohttp_client):
         """Amendment 10: timeout/connection error path.
 
-        When the router (or future HiveLoop) times out, return 504 Gateway Timeout.
-        We simulate this by injecting a router that raises asyncio.TimeoutError.
+        When the MessageRouter.route_inbound() times out, return 504 Gateway Timeout.
+        We simulate this by injecting a mock router whose route_inbound raises
+        asyncio.TimeoutError.
         """
         app = create_app()
 
-        # Inject a mock router that raises TimeoutError
-        async def timeout_router(message: str, session_id: str):
-            raise asyncio.TimeoutError("HiveLoop.think() timed out")
+        # Inject a mock router with route_inbound that raises TimeoutError
+        class TimeoutRouter:
+            async def route_inbound(self, message):
+                raise asyncio.TimeoutError("HiveLoop.think() timed out")
 
-        app["message_router"] = timeout_router
+        app["message_router"] = TimeoutRouter()
         client = await aiohttp_client(app)
         resp = await client.post(
             "/api/chat",

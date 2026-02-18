@@ -64,15 +64,15 @@ ruff format --check .
 
 | # | Task | Track | Depends On | Status | Commit |
 |---|------|-------|------------|--------|--------|
-| 13 | ... | `in_progress` | | | |
-| 14 | Background Observer — Passive Integration Intake | B — Agentic | 1, 6 | `todo` | |
-| 15 | Google Suite Integration (gogcli) | B — Agentic | 8 | `todo` | |
-| 16 | iMessage Channel (imsg) | B — Agentic | 8, 9 | `todo` | |
-| 17 | WhatsApp Channel (wacli) | B — Agentic | 8, 9 | `todo` | |
-| 18 | Content Summarizer (summarize) | B — Agentic | — | `todo` | |
-| 19 | Browser Automation Tool | B — Agentic | — | `todo` | |
-| 20 | Composio Integration — Slack, Discord, GitHub | B — Agentic | 8 | `todo` | |
-| 21 | OpenAI/Anthropic Native Adapters | B — Agentic | 7 | `todo` | |
+| 13 | DreamLoop v2 — Autonomous Tasks + Counterfactuals | A — Cognitive | 1 | `done` | b7e9c58 |
+| 14 | ... | `done` | 55c87e5 | | | | |
+| 15 | ... | `done` | 2d630cf | | | |
+| 16 | ... | `done` | dceae73 | | | |
+| 17 | ... | `done` | 0b83c03 | | | |
+| 18 | ... | `done` | d44ec64 | | | |
+| 19 | ... | `done` | 1c407e6 | | | |
+| 20 | ... | `done` | cd94b63 | | | |
+| 21 | ... | `done` | 354741c | | | |
 
 ### Gate 4: After Task 21 (Integration Complete)
 ```bash
@@ -86,9 +86,9 @@ pytest tests/unit/ tests/integration/ -v --tb=short
 
 | # | Task | Track | Depends On | Status | Commit |
 |---|------|-------|------------|--------|--------|
-| 22 | Wire HumanModel into HiveLoop | Convergence | 2 | `todo` | |
-| 23 | Autonomous Thoughtfulness Engine | Convergence | 5, 10, 11 | `todo` | |
-| 24 | Message Router — Unified Channel Dispatch | Convergence | 9 | `todo` | |
+| 22 | ... | `done` | 354741c | | | |
+| 23 | ... | `done` | 7c95caf | | |
+| 24 | Message Router — Unified Channel Dispatch | Convergence | 9 | `done` | |
 | 25 | TUI Upgrade — Textual + trogon | Convergence | — | `todo` | |
 | 26 | Wire Server to HiveLoop (Full Stack) | Convergence | 3, 6 | `todo` | |
 | 27 | Substrate Encryption Integration | Convergence | 12 | `todo` | |
