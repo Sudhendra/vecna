@@ -30,4 +30,6 @@ build/
 
 synthslab-final.html
 .opencode/
-docs/plans/tasks/
+docs/plans/tasks/[0-9][0-9]-*.md
+!docs/plans/tasks/00-amendments.md
+.vecna-runs/
