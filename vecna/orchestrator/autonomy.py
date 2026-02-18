@@ -139,3 +139,23 @@ class AutonomyLoop(HiveLoop):
         marker = getattr(goal_queue, "mark_failed", None)
         if callable(marker):
             marker(goal_id, error)
+
+    # ------------------------------------------------------------------
+    # Public facades — used by HeartbeatRunner (Amendment 11: public API)
+    # ------------------------------------------------------------------
+
+    def extract_goal(self, item: Any) -> str:
+        """Public facade for goal extraction from a queue item."""
+        return self._extract_goal(item)
+
+    async def run_goal(self, goal: str) -> str:
+        """Public facade for goal execution."""
+        return await self._run_goal(goal)
+
+    def mark_goal_completed(self, goal_queue: GoalQueue, goal_id: str) -> None:
+        """Public facade for marking a goal completed on the queue."""
+        self._mark_completed(goal_queue, goal_id)
+
+    def mark_goal_failed(self, goal_queue: GoalQueue, goal_id: str, error: str) -> None:
+        """Public facade for marking a goal failed on the queue."""
+        self._mark_failed(goal_queue, goal_id, error)

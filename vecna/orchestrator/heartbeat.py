@@ -1,11 +1,14 @@
 """Cron-friendly heartbeat runner for bounded autonomy ticks."""
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from vecna.core.types import SerializableMixin
-from vecna.orchestrator.autonomy import AutonomyLoop
+
+logger = logging.getLogger("vecna.heartbeat")
 
 
 def _default_actions() -> "List[HeartbeatAction]":
@@ -75,9 +78,19 @@ class HeartbeatConfig:
 
 
 class HeartbeatRunner:
+    """Cron-style wake-check-act-sleep loop for autonomous operation.
+
+    The runner pops goals from a queue, delegates execution to an autonomy loop,
+    and tracks due/overdue scheduled actions.
+
+    The ``autonomy_loop`` parameter is duck-typed: it must expose
+    ``extract_goal(item)``, ``run_goal(goal)``, ``mark_goal_completed(queue, id)``,
+    and ``mark_goal_failed(queue, id, error)`` public methods.
+    """
+
     def __init__(
         self,
-        autonomy_loop: AutonomyLoop,
+        autonomy_loop: Any,
         goal_queue: Any,
         config: Optional[HeartbeatConfig] = None,
     ):
@@ -99,6 +112,13 @@ class HeartbeatRunner:
         return due
 
     async def tick(self) -> Dict[str, Any]:
+        """Execute one wake-check-act-sleep cycle.
+
+        Pops up to ``max_goals_per_tick`` items from the goal queue, extracts the
+        goal text, runs it through the autonomy loop, and records success/failure.
+
+        Returns a summary dict with status and counters.
+        """
         summary: Dict[str, Any] = {
             "status": "ok",
             "max_goals_per_tick": max(self.config.max_goals_per_tick, 0),
@@ -116,7 +136,7 @@ class HeartbeatRunner:
                 break
 
             summary["goals_popped"] += 1
-            goal = self.autonomy_loop._extract_goal(item)
+            goal = self.autonomy_loop.extract_goal(item)
             if not goal:
                 summary["goals_skipped"] += 1
                 continue
@@ -133,12 +153,13 @@ class HeartbeatRunner:
                 if goal_id:
                     attempted_goal_ids.add(goal_id)
                 summary["goals_executed"] += 1
-                await self.autonomy_loop._run_goal(goal)
+                await self.autonomy_loop.run_goal(goal)
                 summary["goals_completed"] += 1
-                self.autonomy_loop._mark_completed(self.goal_queue, goal_id)
-            except Exception as exc:
+                self.autonomy_loop.mark_goal_completed(self.goal_queue, goal_id)
+            except (RuntimeError, ValueError, TypeError, OSError, asyncio.TimeoutError) as exc:
                 summary["goals_failed"] += 1
-                self.autonomy_loop._mark_failed(self.goal_queue, goal_id, str(exc))
+                self.autonomy_loop.mark_goal_failed(self.goal_queue, goal_id, str(exc))
+                logger.warning("Goal %r failed: %s", goal_id, exc)
 
         if summary["goals_popped"] == 0:
             summary["status"] = "idle"

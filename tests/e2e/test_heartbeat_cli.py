@@ -52,16 +52,16 @@ def test_cli_heartbeat_tick_uses_configured_adapters(monkeypatch, tmp_path):
             observed["adapters"] = adapters
             observed["name"] = name
 
-        def _extract_goal(self, item):
+        def extract_goal(self, item):
             return item.get("goal", "")
 
-        async def _run_goal(self, goal, max_cycles=None):
+        async def run_goal(self, goal, max_cycles=None):
             return f"done:{goal}"
 
-        def _mark_completed(self, goal_queue, goal_id):
+        def mark_goal_completed(self, goal_queue, goal_id):
             observed["completed_goal_id"] = goal_id
 
-        def _mark_failed(self, goal_queue, goal_id, error):
+        def mark_goal_failed(self, goal_queue, goal_id, error):
             observed["failed_goal_id"] = goal_id
 
     cli_main_module = importlib.import_module("vecna.cli.main")

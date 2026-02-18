@@ -48,7 +48,7 @@ async def test_heartbeat_tick_reads_queue_and_executes_at_most_n_goals(monkeypat
         executed.append(goal)
         return f"done:{goal}"
 
-    monkeypatch.setattr(loop, "_run_goal", fake_run_goal)
+    monkeypatch.setattr(loop, "run_goal", fake_run_goal)
 
     summary = await runner.tick()
 
@@ -99,7 +99,7 @@ async def test_heartbeat_tick_does_not_reprocess_same_goal_id_within_tick(monkey
     async def fail_run_goal(goal: str, max_cycles=None) -> str:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(loop, "_run_goal", fail_run_goal)
+    monkeypatch.setattr(loop, "run_goal", fail_run_goal)
 
     summary = await runner.tick()
 
