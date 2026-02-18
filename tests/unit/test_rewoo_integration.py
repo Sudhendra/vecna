@@ -72,7 +72,7 @@ def test_hive_loop_uses_legacy_path_when_rewoo_disabled(monkeypatch):
         return None
 
     async def fake_run_cycle(task):
-        return ["legacy-response"], [HiveUpdate(source_model="dummy")]
+        return {"dummy": "legacy-response"}, [HiveUpdate(source_model="dummy")]
 
     monkeypatch.setattr(loop, "_ensure_session_manager", fake_ensure_session_manager)
     monkeypatch.setattr(loop, "_run_cycle", fake_run_cycle)
@@ -118,7 +118,7 @@ def test_hive_loop_falls_back_to_legacy_when_rewoo_plan_is_invalid(monkeypatch):
         return None
 
     async def fake_run_cycle(task):
-        return ["legacy-fallback"], [HiveUpdate(source_model="dummy")]
+        return {"dummy": "legacy-fallback"}, [HiveUpdate(source_model="dummy")]
 
     async def fake_generate(prompt):
         return "this is not a valid rewoo plan"
@@ -139,7 +139,7 @@ def test_hive_loop_falls_back_to_legacy_when_rewoo_plan_has_unknown_tool(monkeyp
         return None
 
     async def fake_run_cycle(task):
-        return ["legacy-fallback"], [HiveUpdate(source_model="dummy")]
+        return {"dummy": "legacy-fallback"}, [HiveUpdate(source_model="dummy")]
 
     async def fake_generate(prompt):
         return """Plan: use unknown tool
@@ -163,7 +163,7 @@ def test_hive_loop_falls_back_to_legacy_when_rewoo_planner_raises_runtime_error(
         return None
 
     async def fake_run_cycle(task):
-        return ["legacy-fallback"], [HiveUpdate(source_model="dummy")]
+        return {"dummy": "legacy-fallback"}, [HiveUpdate(source_model="dummy")]
 
     async def boom_generate(prompt):
         raise RuntimeError("planner exploded")
@@ -302,7 +302,7 @@ def test_rewoo_engine_receives_allowed_fs_roots_in_tool_context(monkeypatch):
         return None
 
     async def fake_run_cycle(task):
-        return ["legacy-fallback"], [HiveUpdate(source_model="dummy")]
+        return {"dummy": "legacy-fallback"}, [HiveUpdate(source_model="dummy")]
 
     monkeypatch.setattr("vecna.orchestrator.loop.RewooEngine", _FakeEngine)
     monkeypatch.setattr(loop, "_ensure_session_manager", fake_ensure_session_manager)

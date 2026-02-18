@@ -14,7 +14,7 @@ The result: a single unified mind emerging from many.
 import asyncio
 from typing import List, Dict, Optional, Callable, Union
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 import os
@@ -40,6 +40,161 @@ from vecna.tools.types import ToolExecutionContext
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vecna.hive")
+
+
+# ============================================================
+# CIRCUIT BREAKER — Per-adapter fault isolation (Amendment 13)
+# ============================================================
+
+
+@dataclass
+class CircuitBreaker:
+    """
+    Per-adapter circuit breaker with exponential backoff.
+
+    After ``max_failures`` consecutive failures the breaker *opens* and the
+    adapter is skipped for an exponentially increasing cooldown period
+    (base_cooldown * 2^(failures - max_failures), capped at max_cooldown).
+
+    A single success resets the breaker to closed state.
+    """
+
+    adapter_name: str
+    failure_count: int = 0
+    max_failures: int = 3
+    cooldown_until: Optional[datetime] = None
+    base_cooldown: float = 30.0  # seconds
+    max_cooldown: float = 300.0  # seconds
+
+    def record_failure(self) -> None:
+        """Record a failed call. Opens the breaker after max_failures."""
+        self.failure_count += 1
+        if self.failure_count >= self.max_failures:
+            cooldown = min(
+                self.base_cooldown * (2 ** (self.failure_count - self.max_failures)),
+                self.max_cooldown,
+            )
+            self.cooldown_until = datetime.now() + timedelta(seconds=cooldown)
+            logger.warning(
+                "Circuit breaker OPEN for %s — skipping for %.0fs",
+                self.adapter_name,
+                cooldown,
+            )
+
+    def record_success(self) -> None:
+        """Record a successful call. Resets the breaker to closed state."""
+        self.failure_count = 0
+        self.cooldown_until = None
+
+    def is_open(self) -> bool:
+        """Return True if the breaker is open (adapter should be skipped)."""
+        if self.cooldown_until is None:
+            return False
+        if datetime.now() >= self.cooldown_until:
+            # Half-open: cooldown expired, allow a retry
+            self.cooldown_until = None
+            return False
+        return True
+
+
+# ============================================================
+# RESPONSE SELECTION — Primary Cortex hierarchy
+# ============================================================
+
+
+def select_best_response(
+    responses: Dict[str, str],
+    primary_name: str,
+) -> str:
+    """
+    Select the best response from multiple model outputs.
+
+    Strategy: the Primary Cortex response wins unless it is absent or
+    empty. This replaces the old ``max(responses, key=len)`` approach.
+
+    Args:
+        responses: Mapping of adapter name -> response text.
+        primary_name: Name of the primary cortex adapter.
+
+    Returns:
+        The selected response string (may be empty if all responses are empty).
+    """
+    if not responses:
+        return ""
+
+    # Primary cortex response is the default winner
+    if primary_name in responses and responses[primary_name].strip():
+        return responses[primary_name]
+
+    # Fallback: pick the most substantial non-empty response
+    non_empty = {k: v for k, v in responses.items() if v.strip()}
+    if non_empty:
+        return max(non_empty.values(), key=len)
+
+    return ""
+
+
+def is_task_complete(
+    response: str,
+    task: str,
+    cycle: int,
+    max_cycles: int,
+) -> bool:
+    """
+    Determine if a task is complete based on the response.
+
+    Replaces the old stub that always returned True.
+
+    Heuristics:
+    1. Max cycles reached -> complete (safety valve)
+    2. Empty response -> not complete
+    3. Response contains clarifying questions -> not complete
+    4. Response contains action intent -> not complete (on early cycles)
+    5. Substantive response without questions -> complete
+    """
+    # Safety valve: max cycles
+    if cycle >= max_cycles:
+        return True
+
+    # Empty response
+    if not response or not response.strip():
+        return False
+
+    response_lower = response.lower().strip()
+
+    # Clarifying questions (response asks the user something)
+    question_indicators = [
+        "could you clarify",
+        "can you provide",
+        "what do you mean",
+        "could you be more specific",
+        "do you want me to",
+        "should i",
+        "would you like",
+    ]
+    if any(indicator in response_lower for indicator in question_indicators):
+        return False
+
+    # Action intent on early cycles (still working)
+    if cycle < max_cycles - 1:
+        action_indicators = [
+            "let me search",
+            "let me look",
+            "i'll check",
+            "searching for",
+            "looking up",
+            "let me find",
+            "i need to",
+        ]
+        if any(indicator in response_lower for indicator in action_indicators):
+            return False
+
+    # Substantive response (has content beyond filler)
+    words = response.split()
+    if len(words) < 3:
+        return False
+
+    return True
 
 
 def _get_identity_event_type(event: object) -> str:
@@ -232,6 +387,9 @@ class HiveLoop:
         self.cycle_count = 0
         self.history: List[Dict] = []
 
+        # Per-adapter circuit breakers (Amendment 13)
+        self._circuit_breakers: Dict[str, CircuitBreaker] = {}
+
     def add_adapter(self, adapter: BaseAdapter) -> None:
         """Add a model adapter to the hive."""
         self.adapters.append(adapter)
@@ -242,6 +400,72 @@ class HiveLoop:
         """Add a model by config (creates appropriate adapter)."""
         adapter = create_adapter(config)
         self.add_adapter(adapter)
+
+    # ============================================================
+    # PRIMARY CORTEX — Hierarchy, not democracy
+    # ============================================================
+
+    def get_primary_cortex(self) -> Optional[BaseAdapter]:
+        """
+        Get the primary cortex — the highest-weight adapter.
+
+        The Primary Cortex is the most capable model that orchestrates.
+        Advisory Lenses are consulted only when the Primary flags uncertainty.
+        """
+        if not self.adapters:
+            return None
+        return max(self.adapters, key=lambda a: a.weight)
+
+    def get_advisory_lenses(self) -> List[BaseAdapter]:
+        """Get advisory lenses (all adapters except primary cortex)."""
+        primary = self.get_primary_cortex()
+        if primary is None:
+            return []
+        return [a for a in self.adapters if a.name != primary.name]
+
+    # ============================================================
+    # ADAPTER CALL WITH TIMEOUT + CIRCUIT BREAKER (Amendment 13)
+    # ============================================================
+
+    async def _call_adapter_with_timeout(
+        self,
+        adapter: BaseAdapter,
+        task: str,
+        timeout: float = 60.0,
+    ) -> Optional[tuple]:
+        """
+        Call adapter.think() with timeout and circuit breaker protection.
+
+        Returns (response_text, HiveUpdate) on success, or None on failure/skip.
+        """
+        breaker = self._circuit_breakers.get(adapter.name)
+        if breaker and breaker.is_open():
+            logger.info("Skipping %s — circuit breaker open", adapter.name)
+            return None
+
+        try:
+            result = await asyncio.wait_for(
+                adapter.think(self.state, task),
+                timeout=timeout,
+            )
+            if breaker:
+                breaker.record_success()
+            return result
+        except asyncio.TimeoutError:
+            logger.warning("Adapter %s timed out after %.0fs", adapter.name, timeout)
+            if breaker:
+                breaker.record_failure()
+            return None
+        except ConnectionError as e:
+            logger.error("Adapter %s connection error: %s", adapter.name, e)
+            if breaker:
+                breaker.record_failure()
+            return None
+        except RuntimeError as e:
+            logger.error("Adapter %s runtime error: %s", adapter.name, e)
+            if breaker:
+                breaker.record_failure()
+            return None
 
     def _rebuild_router(self) -> None:
         """Rebuild the domain router with current adapters."""
@@ -352,7 +576,7 @@ class HiveLoop:
                         logger.info(f"=== Cycle {self.cycle_count} ===")
 
                     # Run one cycle
-                    responses, updates = await self._run_cycle(task)
+                    response_map, updates = await self._run_cycle(task)
 
                     # === CONSENSUS SPAN ===
                     if should_trace_pipeline():
@@ -420,9 +644,11 @@ class HiveLoop:
                         except Exception as e:
                             logger.warning(f"Failed to persist identity event: {e}")
 
-                    # Combine responses (take the most detailed)
-                    if responses:
-                        final_response = max(responses, key=len)
+                    # Combine responses — Primary Cortex hierarchy
+                    if response_map:
+                        primary = self.get_primary_cortex()
+                        primary_name = primary.name if primary else ""
+                        final_response = select_best_response(response_map, primary_name)
 
                         # === TOOL EXECUTION SPAN ===
                         if auto_execute_tools and self.tool_runtime:
@@ -519,7 +745,7 @@ class HiveLoop:
                     )
 
                     # Check if task is complete
-                    if self._is_task_complete(final_response, task):
+                    if self._is_task_complete(final_response, task, cycle, max_cycles):
                         logger.info("Task appears complete.")
                         break
 
@@ -573,11 +799,14 @@ class HiveLoop:
         if self._session_manager is None:
             asyncio.run(self._ensure_session_manager())
 
-    async def _run_cycle(self, task: str) -> tuple[List[str], List[HiveUpdate]]:
+    async def _run_cycle(self, task: str) -> tuple[Dict[str, str], List[HiveUpdate]]:
         """
         Run one cycle of the hive loop.
 
         All selected models think in parallel, then we collect results.
+
+        Returns:
+            (response_map, updates) where response_map is {adapter_name: response_text}.
         """
         from vecna.observability.langfuse import trace_span, should_trace_pipeline
 
@@ -712,7 +941,11 @@ class HiveLoop:
         # Restore original summary
         self.state.memory_summary = original_summary
 
-        responses = [r[0] for r in results if r[0]]
+        # Build adapter_name -> response_text mapping (skip empty responses)
+        response_map: Dict[str, str] = {}
+        for adapter, result in zip(selected, results):
+            if result[0]:
+                response_map[adapter.name] = result[0]
         updates = [r[1] for r in results]
 
         # Update semantic memory with new items
@@ -725,7 +958,7 @@ class HiveLoop:
         elif self.memory:
             self.memory.add_from_state(self.state)
 
-        return responses, updates
+        return response_map, updates
 
     async def _run_rewoo_task(self, task: str, session_id: str) -> RewooExecutionResult:
         """Run ReWOO plan-execute-synthesize path with structured fallback result."""
@@ -865,15 +1098,24 @@ class HiveLoop:
             except Exception:
                 pass
 
-    def _is_task_complete(self, response: str, task: str) -> bool:
+    def _is_task_complete(self, response: str, task: str, cycle: int, max_cycles: int) -> bool:
         """
-        Simple heuristic to detect if task is complete.
+        Heuristic to detect if task is complete based on response content.
 
-        In a real system, you'd use more sophisticated methods.
+        Delegates to the module-level ``is_task_complete()`` function.
+
+        Args:
+            response: The model's response text.
+            task: The original task/query.
+            cycle: The current cycle index within this task (0-based).
+            max_cycles: Maximum number of cycles allowed.
         """
-        # For now, just run one cycle for simple tasks
-        # Multi-cycle tasks would need explicit continuation signals
-        return True
+        return is_task_complete(
+            response=response,
+            task=task,
+            cycle=cycle,
+            max_cycles=max_cycles,
+        )
 
     async def continuous_think(
         self,
@@ -890,7 +1132,7 @@ class HiveLoop:
         self.state.add_goal(goal)
 
         while True:
-            responses, updates = await self._run_cycle(task)
+            response_map, updates = await self._run_cycle(task)
             self.consensus.merge_updates(
                 updates,
                 self.state,
@@ -915,7 +1157,11 @@ class HiveLoop:
                 self._maybe_flush_memory_before_compression()
                 await self._compress_memory()
 
-            response = max(responses, key=len) if responses else ""
+            response = ""
+            if response_map:
+                primary = self.get_primary_cortex()
+                primary_name = primary.name if primary else ""
+                response = select_best_response(response_map, primary_name)
 
             # Execute any tool calls in the response
             if response and self.config.auto_execute_tools and self.tool_runtime:
