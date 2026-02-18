@@ -34,6 +34,8 @@ class DreamResult:
     memories_reinforced: int = 0
     memories_decayed: int = 0
     insights_generated: int = 0
+    autonomous_tasks_generated: int = 0
+    counterfactuals_generated: int = 0
     duration_seconds: float = 0.0
     errors: List[str] = field(default_factory=list)
 
@@ -44,6 +46,8 @@ class DreamResult:
             "memories_reinforced": self.memories_reinforced,
             "memories_decayed": self.memories_decayed,
             "insights_generated": self.insights_generated,
+            "autonomous_tasks_generated": self.autonomous_tasks_generated,
+            "counterfactuals_generated": self.counterfactuals_generated,
             "duration_seconds": self.duration_seconds,
             "errors": self.errors,
             "timestamp": datetime.now().isoformat(),
@@ -67,6 +71,9 @@ class DreamLoop:
         decay_rate: float = 0.1,
         min_confidence: float = 0.1,
         summarizer=None,  # Optional LLM for generating summaries
+        goal_queue=None,  # Optional PgGoalQueue for Phase 5
+        autonomous_tasks_enabled: bool = False,  # Gate for Phase 5 + Phase 6
+        max_autonomous_goals: int = 3,  # Cap goals per dream cycle
     ):
         """
         Initialize the dream loop.
@@ -79,6 +86,9 @@ class DreamLoop:
             decay_rate: How much to decay confidence per cycle
             min_confidence: Minimum confidence before archiving
             summarizer: Optional callable for generating episode summaries
+            goal_queue: Optional PgGoalQueue for autonomous task generation
+            autonomous_tasks_enabled: Enable Phase 5 (tasks) and Phase 6 (counterfactuals)
+            max_autonomous_goals: Maximum goals to generate per dream cycle
         """
         self.pg_store = pg_store
         self.compress_after_days = compress_after_days
@@ -87,6 +97,9 @@ class DreamLoop:
         self.decay_rate = decay_rate
         self.min_confidence = min_confidence
         self.summarizer = summarizer
+        self.goal_queue = goal_queue
+        self.autonomous_tasks_enabled = autonomous_tasks_enabled
+        self.max_autonomous_goals = max_autonomous_goals
 
         self._last_run: Optional[datetime] = None
 
@@ -123,7 +136,15 @@ class DreamLoop:
             insights = self._generate_insights(dry_run)
             result.insights_generated = insights
 
-        except Exception as e:
+            # Phase 5: Autonomous Task Generation
+            autonomous = self._generate_autonomous_tasks(dry_run)
+            result.autonomous_tasks_generated = autonomous
+
+            # Phase 6: Counterfactual Exploration
+            counterfactuals = self._generate_counterfactuals(dry_run)
+            result.counterfactuals_generated = counterfactuals
+
+        except (KeyError, ValueError, TypeError) as e:
             logger.error(f"Dream loop error: {e}")
             result.errors.append(str(e))
 
@@ -135,6 +156,9 @@ class DreamLoop:
             f"{result.episodes_created} episodes created, "
             f"{result.memories_reinforced} reinforced, "
             f"{result.memories_decayed} decayed, "
+            f"{result.insights_generated} insights, "
+            f"{result.autonomous_tasks_generated} tasks, "
+            f"{result.counterfactuals_generated} counterfactuals, "
             f"took {result.duration_seconds:.2f}s"
         )
 
@@ -525,6 +549,163 @@ Summary:"""
             return generated
         except Exception as e:
             logger.error(f"Insight generation error: {e}")
+            return 0
+
+    def _generate_autonomous_tasks(self, dry_run: bool) -> int:
+        """Phase 5: Generate autonomous goals from recurring substrate patterns.
+
+        Detects recurring themes via SessionPatternDetector, converts them to
+        CuriosityGoals, and pushes GoalItems to the goal_queue.
+
+        Returns:
+            Number of goals generated.
+        """
+        if not self.autonomous_tasks_enabled:
+            return 0
+        if not self.pg_store:
+            return 0
+        if not self.goal_queue and not dry_run:
+            return 0
+
+        try:
+            get_events = getattr(self.pg_store, "get_recent_events", None)
+            if not callable(get_events):
+                return 0
+
+            events = get_events(limit=200)
+            detector = SessionPatternDetector(
+                min_count=2,
+                max_patterns=self.max_autonomous_goals,
+                exclude_event_types={"dream_loop"},
+            )
+            pattern_result = detector.detect(events)
+            patterns = pattern_result.get("patterns", [])
+            if not patterns:
+                return 0
+
+            from vecna.orchestrator.curiosity import CuriosityEngine
+
+            engine = CuriosityEngine()
+            curiosity_goals = engine.from_dream_patterns(patterns)
+
+            generated = 0
+            for cgoal in curiosity_goals[: self.max_autonomous_goals]:
+                if dry_run:
+                    generated += 1
+                    continue
+
+                from vecna.orchestrator.pg_goal_queue import GoalItem
+
+                goal_item = GoalItem(
+                    goal=f"Research and deepen understanding of: {cgoal.content}",
+                    priority=cgoal.priority,
+                    source="dreamloop",
+                    metadata={
+                        "origin": "dream_phase5",
+                        "pattern_theme": cgoal.content,
+                    },
+                )
+                self.goal_queue.push(goal_item)
+                generated += 1
+
+            logger.info(f"Phase 5: generated {generated} autonomous goals")
+            return generated
+
+        except (KeyError, ValueError, TypeError) as e:
+            logger.error(f"Autonomous task generation error: {e}")
+            return 0
+
+    def _generate_counterfactuals(self, dry_run: bool) -> int:
+        """Phase 6: Generate counterfactual hypotheses from low-confidence beliefs.
+
+        Searches for beliefs with confidence < 0.5 and generates 'What if the
+        opposite were true?' hypotheses for re-evaluation.
+
+        Returns:
+            Number of counterfactual hypotheses generated.
+        """
+        if not self.autonomous_tasks_enabled:
+            return 0
+        if not self.pg_store:
+            return 0
+
+        try:
+            search = getattr(self.pg_store, "search", None)
+            add_item = getattr(self.pg_store, "add_item", None)
+            if not callable(search):
+                return 0
+
+            # Find low-confidence beliefs that might warrant counterfactual exploration
+            candidates = search("belief contradiction", top_k=10)
+            if not candidates:
+                return 0
+
+            # Filter to low-confidence beliefs/hypotheses only
+            low_conf = [
+                c
+                for c in candidates
+                if getattr(c, "confidence", 1.0) < 0.5
+                and getattr(c, "item_type", "") in ("belief", "hypothesis")
+            ]
+            if not low_conf:
+                return 0
+
+            generated = 0
+            for candidate in low_conf[:5]:  # Cap at 5 counterfactuals per cycle
+                content = getattr(candidate, "content", "")
+                if not content:
+                    continue
+
+                # Generate counterfactual text
+                counterfactual_text = (
+                    f"Counterfactual: What if the opposite of '{content}' were true? "
+                    f"This belief has low confidence "
+                    f"({getattr(candidate, 'confidence', 0):.2f}) "
+                    f"and may warrant re-evaluation from alternative perspectives."
+                )
+
+                if self.summarizer:
+                    prompt = (
+                        f"Generate a thoughtful counterfactual hypothesis for this "
+                        f"low-confidence belief: '{content}'. "
+                        f"Frame it as 'What if...' and suggest what evidence would "
+                        f"confirm or refute it. Keep it under 100 words."
+                    )
+                    try:
+                        counterfactual_text = self.summarizer(prompt)
+                    except (OSError, RuntimeError) as e:
+                        logger.error(f"Counterfactual summarization failed: {e}")
+
+                if dry_run:
+                    generated += 1
+                    continue
+
+                if not callable(add_item):
+                    continue
+
+                from vecna.memory.pg_store import MemoryItem
+
+                item = MemoryItem(
+                    content=str(counterfactual_text),
+                    item_type="hypothesis",
+                    confidence=0.3,
+                    domain="meta",
+                    metadata={
+                        "source": "counterfactual",
+                        "origin": "dream_phase6",
+                        "original_belief": content,
+                        "original_confidence": getattr(candidate, "confidence", 0),
+                    },
+                )
+                add_result = add_item(item)
+                if add_result:
+                    generated += 1
+
+            logger.info(f"Phase 6: generated {generated} counterfactual hypotheses")
+            return generated
+
+        except (KeyError, ValueError, TypeError) as e:
+            logger.error(f"Counterfactual generation error: {e}")
             return 0
 
     def _record_dream_event(self, result: DreamResult) -> None:

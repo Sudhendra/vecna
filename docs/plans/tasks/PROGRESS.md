@@ -64,7 +64,7 @@ ruff format --check .
 
 | # | Task | Track | Depends On | Status | Commit |
 |---|------|-------|------------|--------|--------|
-| 13 | DreamLoop v2 — Autonomous Task Generation + Counterfactuals | A — Cognitive | 10 | `todo` | |
+| 13 | ... | `in_progress` | | | |
 | 14 | Background Observer — Passive Integration Intake | B — Agentic | 1, 6 | `todo` | |
 | 15 | Google Suite Integration (gogcli) | B — Agentic | 8 | `todo` | |
 | 16 | iMessage Channel (imsg) | B — Agentic | 8, 9 | `todo` | |

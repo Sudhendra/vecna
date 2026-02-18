@@ -74,6 +74,39 @@ class CuriosityEngine:
 
         return [goal.to_legacy_dict() for goal in self.from_contradictions(contradictions)]
 
+    def from_dream_patterns(self, patterns: List[Dict[str, Any]]) -> List[CuriosityGoal]:
+        """Create curiosity goals from DreamLoop-detected recurring patterns.
+
+        Args:
+            patterns: List of pattern dicts with keys: theme, count, frequency.
+
+        Returns:
+            CuriosityGoals with priority derived from pattern frequency.
+        """
+        goals: List[CuriosityGoal] = []
+        for pattern in patterns:
+            theme = pattern.get("theme", "")
+            if not theme:
+                continue
+
+            frequency = pattern.get("frequency", 0.0)
+            # High frequency (>=0.2) → high priority, moderate → medium, low → low
+            if frequency >= 0.2:
+                priority = "high"
+            elif frequency >= 0.1:
+                priority = "medium"
+            else:
+                priority = "low"
+
+            goals.append(
+                CuriosityGoal(
+                    content=theme,
+                    priority=priority,
+                    source="dream_pattern",
+                )
+            )
+        return goals
+
     def _extract_question_content(self, item: Union[OpenQuestion, Dict[str, Any]]) -> str:
         if isinstance(item, OpenQuestion):
             return str(item.question or "").strip()
