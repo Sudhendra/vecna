@@ -345,6 +345,7 @@ class HiveUpdate(SerializableMixin):
     new_plans: List[Dict] = field(default_factory=list)
     open_questions: List[Dict] = field(default_factory=list)
     contradictions_found: List[Dict] = field(default_factory=list)
+    user_preferences_observed: List[Dict] = field(default_factory=list)
     confidence: float = 0.5
     raw_output: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
@@ -359,6 +360,7 @@ class HiveUpdate(SerializableMixin):
             "new_plans": self.new_plans,
             "open_questions": self.open_questions,
             "contradictions_found": self.contradictions_found,
+            "user_preferences_observed": self.user_preferences_observed,
             "confidence": self.confidence,
             "timestamp": self.timestamp.isoformat(),
         }
