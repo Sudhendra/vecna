@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from vecna.core.types import SerializableMixin
+from vecna.orchestrator.thoughtfulness import ThoughtfulnessEngine
 
 logger = logging.getLogger("vecna.heartbeat")
 
@@ -28,6 +29,11 @@ def _default_actions() -> "List[HeartbeatAction]":
             name="curiosity",
             description="Generate curiosity-driven exploration goals",
             interval_seconds=3600,
+        ),
+        HeartbeatAction(
+            name="thoughtfulness",
+            description="Generate proactive follow-ups and insights",
+            interval_seconds=1800,
         ),
     ]
 
@@ -93,10 +99,12 @@ class HeartbeatRunner:
         autonomy_loop: Any,
         goal_queue: Any,
         config: Optional[HeartbeatConfig] = None,
+        thoughtfulness: Optional[ThoughtfulnessEngine] = None,
     ):
         self.autonomy_loop = autonomy_loop
         self.goal_queue = goal_queue
         self.config = config or HeartbeatConfig()
+        self.thoughtfulness = thoughtfulness
 
     def get_due_actions(self) -> List[HeartbeatAction]:
         """Return actions that are due to run based on their last_run and interval."""
@@ -169,3 +177,22 @@ class HeartbeatRunner:
             summary["status"] = "partial"
 
         return summary
+
+    async def run_thoughtfulness(self) -> None:
+        """Run thoughtfulness engine as a heartbeat action.
+
+        Generates follow-up messages from the autonomy loop's state.
+        Skipped silently if no thoughtfulness engine is configured or
+        if the autonomy loop has no accessible state.
+        """
+        if self.thoughtfulness is None:
+            return
+        try:
+            state = getattr(self.autonomy_loop, "state", None)
+            if state is None:
+                logger.debug("No state on autonomy_loop; skipping thoughtfulness")
+                return
+            self.thoughtfulness.generate_follow_ups(state)
+            logger.debug("Thoughtfulness heartbeat completed")
+        except (KeyError, ValueError, TypeError, AttributeError) as exc:
+            logger.warning("Thoughtfulness heartbeat failed: %s", exc)

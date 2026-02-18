@@ -515,11 +515,11 @@ class TestHeartbeatRunnerConcurrency:
         tasks = [asyncio.create_task(call_due()) for _ in range(50)]
         results = await asyncio.gather(*tasks)
 
-        # All 50 calls should return the same 3 default actions (never-run = always due)
+        # All 50 calls should return the same 4 default actions (never-run = always due)
         for result in results:
-            assert len(result) == 3
+            assert len(result) == 4
             names = {a.name for a in result}
-            assert names == {"check_goals", "dream", "curiosity"}
+            assert names == {"check_goals", "dream", "curiosity", "thoughtfulness"}
 
     async def test_concurrent_mark_run_no_lost_updates(self):
         """50+ concurrent mark_run() calls on the same action should all record timestamps."""
