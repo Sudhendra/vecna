@@ -1,5 +1,8 @@
 """Tests for security hardening — encryption at rest and privacy tier filtering."""
 
+import pytest
+from cryptography.fernet import InvalidToken
+
 from vecna.security.encryption import SubstrateEncryption
 from vecna.security.privacy import PrivacyTier, PrivacyFilter
 
@@ -37,16 +40,11 @@ class TestSubstrateEncryption:
 
     def test_different_passwords_cannot_decrypt(self):
         """Decryption with a different password-derived key should fail."""
-        from cryptography.fernet import InvalidToken
-
         enc1 = SubstrateEncryption.from_password("password-A", salt=b"salt1234salt1234")
         enc2 = SubstrateEncryption.from_password("password-B", salt=b"salt1234salt1234")
         ct = enc1.encrypt("confidential")
-        try:
+        with pytest.raises(InvalidToken):
             enc2.decrypt(ct)
-            assert False, "Expected InvalidToken to be raised"
-        except InvalidToken:
-            pass  # Expected
 
     def test_unicode_roundtrip(self):
         enc = SubstrateEncryption.generate()
@@ -65,72 +63,51 @@ class TestSubstrateEncryption:
         ct = enc.encrypt(plaintext)
         assert enc.decrypt(ct) == plaintext
 
-    def test_ciphertext_is_string(self):
+    def test_ciphertext_is_base64_encoded_string(self):
+        """Fernet ciphertext is a URL-safe base64-encoded string."""
         enc = SubstrateEncryption.generate()
         ct = enc.encrypt("hello")
-        assert isinstance(ct, str)
+        # Fernet tokens start with 'gAAAAA' (version byte 0x80 + timestamp)
+        assert ct.startswith("gAAAAA")
+        # Must be decodable back to the original
+        assert enc.decrypt(ct) == "hello"
 
     def test_generate_produces_different_keys(self):
         enc1 = SubstrateEncryption.generate()
         enc2 = SubstrateEncryption.generate()
         ct = enc1.encrypt("test")
         # Different keys should not decrypt each other's ciphertext
-        from cryptography.fernet import InvalidToken
-
-        try:
+        with pytest.raises(InvalidToken):
             enc2.decrypt(ct)
-            assert False, "Expected InvalidToken to be raised"
-        except InvalidToken:
-            pass  # Expected
 
 
 class TestSubstrateEncryptionErrors:
     """Error and edge-case tests (Amendment 10)."""
 
     def test_decrypt_invalid_ciphertext_raises_invalid_token(self):
-        from cryptography.fernet import InvalidToken
-
         enc = SubstrateEncryption.generate()
-        try:
+        with pytest.raises(InvalidToken):
             enc.decrypt("not-valid-ciphertext")
-            assert False, "Expected InvalidToken to be raised"
-        except InvalidToken:
-            pass  # Expected
 
     def test_decrypt_corrupted_ciphertext_raises_invalid_token(self):
-        from cryptography.fernet import InvalidToken
-
         enc = SubstrateEncryption.generate()
         ct = enc.encrypt("hello")
         # Corrupt the ciphertext by flipping characters
         corrupted = ct[:10] + "AAAA" + ct[14:]
-        try:
+        with pytest.raises(InvalidToken):
             enc.decrypt(corrupted)
-            assert False, "Expected InvalidToken to be raised"
-        except InvalidToken:
-            pass  # Expected
 
     def test_decrypt_empty_ciphertext_raises_invalid_token(self):
-        from cryptography.fernet import InvalidToken
-
         enc = SubstrateEncryption.generate()
-        try:
+        with pytest.raises(InvalidToken):
             enc.decrypt("")
-            assert False, "Expected InvalidToken to be raised"
-        except InvalidToken:
-            pass  # Expected
 
     def test_from_password_different_salt_produces_different_key(self):
-        from cryptography.fernet import InvalidToken
-
         enc1 = SubstrateEncryption.from_password("same-pass", salt=b"salt-AAAAAAAAAA16")
         enc2 = SubstrateEncryption.from_password("same-pass", salt=b"salt-BBBBBBBBBB16")
         ct = enc1.encrypt("secret")
-        try:
+        with pytest.raises(InvalidToken):
             enc2.decrypt(ct)
-            assert False, "Expected InvalidToken to be raised"
-        except InvalidToken:
-            pass  # Expected
 
 
 class TestPrivacyTiers:
