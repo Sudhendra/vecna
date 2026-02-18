@@ -230,7 +230,11 @@ class HiveState:
         return "\n".join(lines)
 
     def add_fact(self, fact: Fact) -> bool:
-        """Add a fact, checking for duplicates and contradictions."""
+        """Add a fact, checking for duplicates, contradictions, and expiry."""
+        # Skip expired facts
+        if fact.is_expired():
+            return False
+
         # Check for near-duplicate
         for existing in self.facts:
             if self._is_similar(existing.content, fact.content):
@@ -238,6 +242,7 @@ class HiveState:
                 if fact.confidence > existing.confidence:
                     existing.confidence = fact.confidence
                     existing.evidence = fact.evidence
+                    existing.valid_until = fact.valid_until
                 return False
 
         self.facts.append(fact)
