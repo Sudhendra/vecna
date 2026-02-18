@@ -22,16 +22,16 @@
 |---|------|-------|------------|--------|--------|
 | 1 | ... | `done` | 324995e | | | |
 | 2 | ... | `done` | 21a7829 | | | |
-| 3 | ... | `in_progress` | | | |
-| 4 | Primary Cortex Architecture — Hierarchy Not Democracy | A — Cognitive | — | `todo` | |
-| 5 | Fix `_is_task_complete()` Stub | A — Cognitive | — | `todo` | |
-| 6 | HTTP Server — Make Vecna a Service | B — Agentic | — | `todo` | |
-| 7 | Migrate from YAML HIVE_UPDATE to Native Tool Calling | B — Agentic | — | `todo` | |
-| 8 | Integration Framework — Base Class + Config Toggle | B — Agentic | — | `todo` | |
-| 9 | Channel Adapter System | B — Agentic | — | `todo` | |
-| 10 | Goal Queue Migration — File to PostgreSQL | B — Agentic | — | `todo` | |
-| 11 | Cron Autonomy — Wake-Check-Act-Sleep Loop | B — Agentic | 5 | `todo` | |
-| 12 | Security — Substrate Encryption at Rest | B — Agentic | — | `todo` | |
+| 3 | ... | `done` | 845b28f | | | |
+| 4 | ... | `done` | 845b28f | | | |
+| 5 | ... | `done` | b62db16 | | | |
+| 6 | ... | `done` | 3868c3c | | | |
+| 7 | ... | `done` | 2484925 | | | |
+| 8 | ... | `done` | 272392a | | | |
+| 9 | ... | `done` | eaf00f0 | | | |
+| 10 | ... | `done` | 612b5fc | | |
+| 11 | Cron Autonomy — Wake-Check-Act-Sleep Loop | B — Agentic | 5 | `done` | 0a8374c |
+| 12 | Security — Substrate Encryption at Rest | B — Agentic | — | `done` | 816de7f |
 
 ### Gate 1: After Task 5 (Foundation Cognitive)
 ```bash
@@ -39,7 +39,7 @@ pytest tests/unit/ -v --tb=short
 python -c "from vecna.core.human_model import HumanModel; print('HumanModel OK')"
 python -c "from vecna.orchestrator.moa import MoAConsensus; print('MoA OK')"
 ```
-**Status:** `pending`
+**Status:** `passed`
 
 ### Gate 2: After Task 9 (Foundation Agentic)
 ```bash
@@ -48,7 +48,7 @@ python -c "from vecna.server.app import create_app; print('Server OK')"
 python -c "from vecna.channels.base import BaseChannel; print('Channels OK')"
 python -c "from vecna.integrations.base import BaseIntegration; print('Integrations OK')"
 ```
-**Status:** `pending`
+**Status:** `passed`
 
 ### Gate 3: After Task 12 (Foundation Complete)
 ```bash
@@ -56,7 +56,7 @@ pytest tests/unit/ -v --tb=short
 ruff check .
 ruff format --check .
 ```
-**Status:** `pending`
+**Status:** `passed`
 
 ---
 
