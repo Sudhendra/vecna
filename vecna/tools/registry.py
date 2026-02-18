@@ -82,6 +82,13 @@ def get_default_registry(
             executor=web_search_executor,
         )
 
+        try:
+            from vecna.tools.summarize_tool import SUMMARIZE_TOOL_SPEC, summarize_executor
+
+            registry.register(SUMMARIZE_TOOL_SPEC, summarize_executor)
+        except ImportError:
+            pass  # summarize tool not available
+
     if enable_fs_tools:
         registry.register(
             ToolSpec(
