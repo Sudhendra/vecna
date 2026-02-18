@@ -444,16 +444,44 @@ class HiveState:
 
         return counts
 
-    def _is_similar(self, text1: str, text2: str, threshold: float = 0.8) -> bool:
-        """Simple similarity check (can be replaced with embeddings)."""
+    def _is_similar(
+        self,
+        text1: str,
+        text2: str,
+        threshold: float = 0.8,
+        embedding_a: Optional[List[float]] = None,
+        embedding_b: Optional[List[float]] = None,
+    ) -> bool:
+        """Check similarity using embeddings first, Jaccard as fallback.
+
+        When both embeddings are provided, cosine similarity is used exclusively.
+        The Jaccard fallback is only used when embeddings are unavailable.
+        Per Amendment 14, for fact deduplication prefer pgvector query when a
+        database session is available; in-memory comparison is acceptable for
+        small collections.
+        """
         # Normalize
         t1 = text1.lower().strip()
         t2 = text2.lower().strip()
 
-        if t1 == t2:
+        if t1 == t2 and embedding_a is None and embedding_b is None:
             return True
 
-        # Jaccard similarity on words
+        # Use embedding cosine similarity when both are available
+        if embedding_a is not None and embedding_b is not None:
+            import math
+
+            if not embedding_a or not embedding_b or len(embedding_a) != len(embedding_b):
+                return False
+            dot = sum(a * b for a, b in zip(embedding_a, embedding_b))
+            mag_a = math.sqrt(sum(a * a for a in embedding_a))
+            mag_b = math.sqrt(sum(b * b for b in embedding_b))
+            if mag_a == 0.0 or mag_b == 0.0:
+                return False
+            cosine = dot / (mag_a * mag_b)
+            return cosine >= threshold
+
+        # Fallback: Jaccard similarity on words
         words1 = set(t1.split())
         words2 = set(t2.split())
 

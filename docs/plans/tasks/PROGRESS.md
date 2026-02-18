@@ -21,8 +21,8 @@
 | # | Task | Track | Depends On | Status | Commit |
 |---|------|-------|------------|--------|--------|
 | 1 | ... | `done` | 324995e | | | |
-| 2 | ... | `in_progress` | | | |
-| 3 | Upgrade Consensus Engine — Embedding Similarity + MoA | A — Cognitive | — | `todo` | |
+| 2 | ... | `done` | 21a7829 | | | |
+| 3 | ... | `in_progress` | | | |
 | 4 | Primary Cortex Architecture — Hierarchy Not Democracy | A — Cognitive | — | `todo` | |
 | 5 | Fix `_is_task_complete()` Stub | A — Cognitive | — | `todo` | |
 | 6 | HTTP Server — Make Vecna a Service | B — Agentic | — | `todo` | |
