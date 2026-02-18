@@ -570,16 +570,18 @@ class HiveState:
         return cls.import_from_file(filepath)
 
     @classmethod
-    def import_from_file(cls, filepath: str) -> "HiveState":
-        """
-        Import state from JSON file for migration/recovery.
+    def from_dict(cls, data: Dict) -> "HiveState":
+        """Reconstruct HiveState from a dictionary.
 
-        NOTE: This is NOT the primary loading mechanism.
-        Use PgStateManager for normal state loading.
-        """
-        with open(filepath, "r") as f:
-            data = json.load(f)
+        This is the inverse of to_full_dict(). Used by EncryptedStateStore,
+        PgStateManager, and import_from_file.
 
+        Args:
+            data: Dictionary as produced by to_full_dict().
+
+        Returns:
+            Reconstructed HiveState.
+        """
         state = cls()
 
         # Core knowledge
@@ -618,6 +620,19 @@ class HiveState:
             state.human_model = HumanModel.from_dict(data["human_model"])
 
         return state
+
+    @classmethod
+    def import_from_file(cls, filepath: str) -> "HiveState":
+        """
+        Import state from JSON file for migration/recovery.
+
+        NOTE: This is NOT the primary loading mechanism.
+        Use PgStateManager for normal state loading.
+        """
+        with open(filepath, "r") as f:
+            data = json.load(f)
+
+        return cls.from_dict(data)
 
     # ============================================================
     # IDENTITY MANAGEMENT
