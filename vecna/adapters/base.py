@@ -526,14 +526,32 @@ def create_adapter(config: ModelConfig) -> BaseAdapter:
     """
     Factory function to create the appropriate adapter.
 
-    Default is Copilot (GitHub Copilot API).
-    Local models use Ollama or Transformers.
+    Amendment 4: Uses provider key as canonical routing.
+    Falls back to model_id/base_url heuristics for backward compatibility.
     """
 
     model_id = config.model_id.lower()
     base_url = (config.base_url or "").lower()
 
-    # Check for local model providers first
+    # Amendment 4: Check explicit provider key FIRST (canonical routing)
+    provider = (config.extra_params or {}).get("provider", "")
+
+    if provider == "openai":
+        from vecna.adapters.openai_adapter import OpenAIAdapter
+
+        return OpenAIAdapter(config)
+
+    if provider == "anthropic":
+        from vecna.adapters.anthropic_adapter import AnthropicAdapter
+
+        return AnthropicAdapter(config)
+
+    if provider == "groq":
+        return GroqAdapter(config)
+
+    # Heuristic routing by model_id / base_url (backward compatibility)
+
+    # Check for local model providers
     if any(x in model_id for x in ["llama", "mistral", "mixtral", "qwen", "deepseek", "phi"]):
         # Check if Ollama URL is provided
         if config.base_url and "ollama" in base_url:
@@ -543,8 +561,20 @@ def create_adapter(config: ModelConfig) -> BaseAdapter:
         else:
             return TransformersAdapter(config)
 
-    # Check for Groq (fast inference service)
-    if "groq" in base_url or config.extra_params.get("provider") == "groq":
+    # Check for OpenAI by model_id pattern
+    if "openai" in model_id:
+        from vecna.adapters.openai_adapter import OpenAIAdapter
+
+        return OpenAIAdapter(config)
+
+    # Check for Anthropic by model_id pattern
+    if "claude" in model_id:
+        from vecna.adapters.anthropic_adapter import AnthropicAdapter
+
+        return AnthropicAdapter(config)
+
+    # Check for Groq by base_url
+    if "groq" in base_url:
         return GroqAdapter(config)
 
     # Check for explicit Ollama URL

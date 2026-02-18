@@ -17,6 +17,8 @@ from vecna.adapters.base import (
     OllamaAdapter,
     TransformersAdapter,
 )
+from vecna.adapters.openai_adapter import OpenAIAdapter
+from vecna.adapters.anthropic_adapter import AnthropicAdapter
 
 logger = logging.getLogger("vecna.config.factory")
 
@@ -64,7 +66,11 @@ def create_adapter_from_entry(
 
     # Create appropriate adapter based on provider
     try:
-        if entry.provider == Provider.GROQ:
+        if entry.provider == Provider.OPENAI:
+            return OpenAIAdapter(config)
+        elif entry.provider == Provider.ANTHROPIC:
+            return AnthropicAdapter(config)
+        elif entry.provider == Provider.GROQ:
             return GroqAdapter(config)
         elif entry.provider == Provider.COPILOT:
             # Copilot doesn't need API key in config, uses auth module

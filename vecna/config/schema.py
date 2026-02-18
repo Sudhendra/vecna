@@ -22,6 +22,8 @@ class Provider(str, Enum):
     OLLAMA = "ollama"  # Local models via Ollama
     TRANSFORMERS = "transformers"  # Local HuggingFace models
     GROQ = "groq"  # Groq fast inference (optional)
+    OPENAI = "openai"  # Native OpenAI API
+    ANTHROPIC = "anthropic"  # Native Anthropic API
 
 
 class StorageBackend(str, Enum):
