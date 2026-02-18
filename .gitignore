@@ -29,3 +29,5 @@ build/
 .worktrees/
 
 synthslab-final.html
+.opencode/
+docs/plans/tasks/

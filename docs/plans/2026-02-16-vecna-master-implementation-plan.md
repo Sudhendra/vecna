@@ -10,6 +10,110 @@
 
 ---
 
+## Review Amendments (2026-02-17)
+
+> **Status:** All 16 amendments ACCEPTED. These are binding requirements that apply
+> across all tasks. Read this section before implementing any task.
+
+### Architecture Amendments
+
+**Amendment 1 — Cross-track integration checkpoints.**
+Add smoke tests at weeks 4, 8, 12 to verify Track A + Track B compose correctly.
+Each checkpoint instantiates the full object graph (HiveLoop → MessageRouter → adapters → tools)
+and runs one end-to-end message through the stack. Catches composition bugs before Phase 3.
+
+**Amendment 2 — Audit plan references against current codebase.**
+- `vecna/orchestrator/pg_goal_queue.py` already exists — Task 10 must say "Modify:", not "Create:".
+- Test count is 523 (not 378). Update "Current Codebase State" section.
+- Before implementing any task, verify file existence; use "Modify:" if file exists.
+
+**Amendment 3 — MessageRouter is the single entry point for ALL inbound messages.**
+HTTP server routes (`/api/chat`, `/ws/stream`) MUST delegate to `MessageRouter.route_inbound()`,
+NOT call `HiveLoop.think()` directly. The router handles session management, channel metadata,
+and rate limiting. `HiveLoop.think()` is an internal API only the router calls.
+
+**Amendment 4 — Provider enum as canonical adapter routing key.**
+`create_adapter()` in `adapters/base.py` must use `match config.provider` on the `Provider` enum
+(not string matching or substring heuristics). Add `OPENAI` and `ANTHROPIC` to `Provider` enum
+in Task 18 before creating the adapter classes.
+
+### Code Quality Amendments
+
+**Amendment 5 — Shared tool-call parsing; no duplicate `parse_update()` methods.**
+Task 7 defines `parse_tool_call_update()` in `tool_calling.py`. OpenAI adapter (Task 18a)
+and Anthropic adapter (Task 18b) MUST import and use this shared function.
+Do NOT write a `parse_update()` method in either adapter. Same for `build_hive_update_tool_schema()` —
+one definition in `tool_calling.py`, used everywhere.
+
+**Amendment 6 — Field name is `source_model`, not `source`.**
+The existing `Fact` dataclass uses `source_model` (types.py:34). All plan code using `source=`
+on Fact/Belief/HiveUpdate objects must use `source_model=`. Convention: `source_model` = which
+adapter produced it, `source_type` = epistemological classification (observation, inference,
+told, derived).
+
+**Amendment 7 — `SerializableMixin` for all dataclasses.**
+Add `SerializableMixin` to `vecna/core/types.py` with a generic `to_dict()` using
+`dataclasses.asdict()` + datetime/enum converter. All dataclasses inherit from it.
+Do NOT write individual `to_dict()` methods — the mixin handles it.
+
+**Amendment 8 — Specific exception types at every catch site.**
+Never use bare `except Exception as e:`. Every `try/except` must catch the most specific
+exception type: `openai.APIError`, `anthropic.APIError`, `json.JSONDecodeError`,
+`asyncio.TimeoutError`, `aiohttp.ClientError`, `playwright.async_api.Error`,
+`sqlalchemy.exc.SQLAlchemyError`, `redis.RedisError`, `KeyError`, `ValueError`, etc.
+Only use `except Exception` at top-level entry points (CLI, HTTP handler) as a last resort.
+
+### Test Amendments
+
+**Amendment 9 — No trivial assertions.**
+Tests must NOT use `isinstance(x, SomeClass)`, `x is not None`, or `len(x) > 0` as their
+primary assertion. Assert specific values, specific field contents, specific behaviors.
+Example: not `assert isinstance(fact, Fact)` but `assert fact.content == "expected"`.
+
+**Amendment 10 — Error path test minimums.**
+Every task must include at least 2 error/edge-case tests. Externally-facing components
+(HTTP server, channel adapters, native adapters) must have at least 4 error tests covering:
+malformed input, authentication failures, timeout/connection errors, and resource exhaustion.
+
+**Amendment 11 — Test through public interface only.**
+Tests must NOT access private attributes (`_channels`, `_sessions`, `_human_model`, `_pending`).
+Add public accessor methods where needed (`list_channels()`, `get_session_count()`).
+Pass dependencies via constructor parameters, not by setting private attributes after construction.
+
+**Amendment 12 — Concurrency tests for shared mutable state.**
+Add `asyncio.gather()` stress tests for: HiveState (concurrent `add_fact()`),
+MetricsCollector (concurrent `record_*`), MessageRouter (concurrent `route_inbound()`),
+PgGoalQueue (concurrent `push()`/`pop()`). Each test runs 50+ concurrent operations
+and asserts no data loss or corruption.
+
+### Performance Amendments
+
+**Amendment 13 — Per-adapter timeout and circuit breaker.**
+Wrap each adapter's `think()` call in `asyncio.wait_for(timeout=config.adapter_timeout)`.
+Add a `CircuitBreaker` dataclass per adapter: after N consecutive failures (default 3),
+skip that adapter for exponentially increasing cooldown (30s, 60s, 120s, max 300s).
+Log when adapters are skipped. Circuit breaker resets on success.
+
+**Amendment 14 — pgvector for fact deduplication; embeddings for response similarity.**
+`add_fact()` must check for similar existing facts via pgvector cosine similarity query
+(`ORDER BY embedding <=> $1 LIMIT 5, threshold 0.9`) instead of in-memory Jaccard.
+Response-level consensus comparison (3-6 items) uses embedding cosine similarity
+instead of Jaccard word overlap. Pairwise is acceptable since n = number of adapters.
+
+**Amendment 15 — Batch DreamLoop database operations.**
+Replace per-item UPDATEs in `_reinforce_memories` and `_decay_memories` with batched
+`UPDATE ... FROM (VALUES ...) AS data(id, val) WHERE table.id = data.id` statements.
+Store `source_event_ids` as a JSONB array (not stringified), use `@>` containment operator
+with GIN index. Requires an Alembic migration for the JSONB format change.
+
+**Amendment 16 — Cache `to_prompt_context()` with token budget.**
+Add `_context_cache`/`_context_dirty` to HiveState. Any mutation sets dirty flag.
+`to_prompt_context()` returns cached string if clean. Add `max_context_tokens` parameter
+(default 4000) with relevance-based truncation: recent facts first, high-confidence beliefs
+first, skip older/lower-confidence items when budget exceeded.
+
+---
+
 ## Architecture Diagram
 
 ```
@@ -65,7 +169,7 @@
 - Copilot/Groq/Ollama/Transformers adapters (`adapters/base.py`)
 - Rich CLI with boot sequence, chat REPL, identity views (`cli/main.py`)
 - Langfuse observability tracing (`observability/langfuse.py`)
-- 378 unit tests passing
+- 523 unit tests passing
 
 ### Critical Kill Signals (Must Fix)
 | Issue | Location | Impact |
@@ -115,6 +219,7 @@ class TestTemporalFacts:
             valid_until=datetime.now() + timedelta(hours=1),
         )
         assert fact.valid_until is not None
+        # Amendment 9: Strengthen — assert fact.valid_until is approximately now + 1 hour, not just existence.
         assert not fact.is_expired()
 
     def test_fact_expires(self):
@@ -175,6 +280,10 @@ Expected: FAIL — `Fact` has no `valid_until`, `is_expired`, `staleness_score`,
 Modify `vecna/core/types.py` — add to the `Fact` dataclass:
 
 ```python
+# Amendment 7: All dataclasses in this file should inherit from SerializableMixin.
+# Add to imports: from vecna.core.types import SerializableMixin
+# Usage: @dataclass \n class Fact(SerializableMixin): ...
+
 @dataclass
 class Fact:
     """
@@ -220,6 +329,9 @@ class Fact:
         return max(0.0, self.confidence - staleness_penalty)
 
     def to_dict(self) -> Dict:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         result = {
             "id": self.id,
             "content": self.content,
@@ -276,7 +388,7 @@ Expected: All PASS
 **Step 6: Run full test suite for regressions**
 
 Run: `pytest tests/unit/ -v --tb=short`
-Expected: All existing 378 tests still pass
+Expected: All existing 523 tests still pass
 
 **Step 7: Commit**
 
@@ -393,6 +505,7 @@ class TestCommunicationStyle:
         directive = style.to_prompt_directive()
         assert isinstance(directive, str)
         assert len(directive) > 0
+        # Amendment 9: Strengthen — assert directive contains expected style keywords (e.g. "concise", "formal", "technical"), not just type/length.
 
 
 class TestInteractionPatterns:
@@ -487,16 +600,9 @@ class Preference:
     last_observed: datetime = field(default_factory=datetime.now)
     context: Optional[str] = None  # When this preference applies
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "key": self.key,
-            "value": self.value,
-            "confidence": self.confidence,
-            "observed_count": self.observed_count,
-            "first_observed": self.first_observed.isoformat(),
-            "last_observed": self.last_observed.isoformat(),
-            "context": self.context,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Preference":
@@ -567,14 +673,9 @@ class CommunicationStyle:
 
         return " ".join(parts) if parts else "Respond naturally."
 
-    def to_dict(self) -> Dict[str, float]:
-        return {
-            "verbosity": self.verbosity,
-            "formality": self.formality,
-            "technical_depth": self.technical_depth,
-            "emoji_usage": self.emoji_usage,
-            "humor": self.humor,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CommunicationStyle":
@@ -596,13 +697,9 @@ class InteractionPattern:
     duration_seconds: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "topic": self.topic,
-            "satisfaction_signal": self.satisfaction_signal,
-            "duration_seconds": self.duration_seconds,
-            "timestamp": self.timestamp.isoformat(),
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InteractionPattern":
@@ -648,14 +745,9 @@ class EmotionalContext:
         self.last_trigger = trigger
         self.updated_at = datetime.now()
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "current_state": self.current_state,
-            "confidence": self.confidence,
-            "last_trigger": self.last_trigger,
-            "updated_at": self.updated_at.isoformat(),
-            "history": self.history,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "EmotionalContext":
@@ -799,6 +891,9 @@ class HumanModel:
         return "\n".join(lines)
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         return {
             "id": self.id,
             "name": self.name,
@@ -867,6 +962,18 @@ def ensure_human_model(self) -> HumanModel:
 Update `to_full_dict()` and `import_from_file()` to include `human_model`.
 
 Update `to_prompt_context()` to include human model context after identity preamble.
+
+> **Amendment 16:** Add caching to `to_prompt_context()`:
+> - Add `_context_cache: Optional[str] = field(default=None, repr=False)` and
+>   `_context_dirty: bool = field(default=True, repr=False)` to HiveState.
+> - Every mutation method (`add_fact`, `add_belief`, `update_beliefs`, `apply_update`,
+>   `remove_fact`) must set `self._context_dirty = True`.
+> - `to_prompt_context()` returns `self._context_cache` if `not self._context_dirty`,
+>   otherwise rebuilds, caches, and sets `self._context_dirty = False`.
+> - Add `max_context_tokens: int = 4000` parameter. When the full context exceeds this
+>   budget, apply relevance-based truncation: sort facts by `(recency, confidence)`,
+>   beliefs by `confidence`, include as many as fit within budget. This controls both
+>   latency (string building) and API cost (token usage across N adapters per cycle).
 
 **Step 5: Run tests**
 
@@ -972,6 +1079,7 @@ class TestMoALayering:
         merged = moa.merge_responses(responses)
         assert isinstance(merged, str)
         assert len(merged) > 0
+        # Amendment 9: Strengthen — assert merged content contains key terms from input responses (e.g. "Python", "data science"), not just type/length.
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -1027,6 +1135,13 @@ class ConsensusEngine:
         jaccard = intersection / union if union > 0 else 0
         return jaccard >= self.config.similarity_threshold
 ```
+
+> **Amendment 14:** For fact deduplication in `add_fact()`, prefer a pgvector query
+> (`ORDER BY embedding <=> $1 LIMIT 5` with threshold 0.9) over in-memory pairwise
+> comparison when a database session is available. The in-memory `_is_similar()` with
+> embedding cosine is acceptable for response-level consensus (n = number of adapters,
+> always small). The Jaccard fallback should be removed entirely — if embeddings aren't
+> available, skip deduplication rather than using a broken heuristic.
 
 **Step 4: Create MoA consensus module**
 
@@ -1284,6 +1399,78 @@ def select_best_response(
     return max(responses.values(), key=len) if responses else ""
 ```
 
+**Step N: Add adapter circuit breaker and timeout (Amendment 13)**
+
+Add to `vecna/orchestrator/loop.py`:
+
+```python
+@dataclass
+class CircuitBreaker:
+    """Per-adapter circuit breaker with exponential backoff."""
+    
+    adapter_name: str
+    failure_count: int = 0
+    max_failures: int = 3
+    cooldown_until: Optional[datetime] = None
+    base_cooldown: float = 30.0  # seconds
+    max_cooldown: float = 300.0  # seconds
+
+    def record_failure(self) -> None:
+        self.failure_count += 1
+        if self.failure_count >= self.max_failures:
+            cooldown = min(
+                self.base_cooldown * (2 ** (self.failure_count - self.max_failures)),
+                self.max_cooldown,
+            )
+            self.cooldown_until = datetime.now() + timedelta(seconds=cooldown)
+            logger.warning(
+                "Circuit breaker OPEN for %s — skipping for %.0fs",
+                self.adapter_name, cooldown,
+            )
+
+    def record_success(self) -> None:
+        self.failure_count = 0
+        self.cooldown_until = None
+
+    def is_open(self) -> bool:
+        if self.cooldown_until is None:
+            return False
+        if datetime.now() >= self.cooldown_until:
+            self.cooldown_until = None  # Half-open: allow retry
+            return False
+        return True
+```
+
+Wrap adapter calls in `_run_cycle`:
+```python
+async def _call_adapter_with_timeout(
+    self, adapter: BaseAdapter, prompt: str, timeout: float = 60.0
+) -> Optional[str]:
+    """Call adapter with timeout and circuit breaker protection."""
+    breaker = self._circuit_breakers.get(adapter.name)
+    if breaker and breaker.is_open():
+        logger.info("Skipping %s — circuit breaker open", adapter.name)
+        return None
+    try:
+        result = await asyncio.wait_for(
+            adapter.think(prompt, self.state),
+            timeout=timeout,
+        )
+        if breaker:
+            breaker.record_success()
+        return result
+    except asyncio.TimeoutError:
+        logger.warning("Adapter %s timed out after %.0fs", adapter.name, timeout)
+        if breaker:
+            breaker.record_failure()
+        return None
+    except openai.APIError as e:  # Amendment 8: specific exception
+        logger.error("Adapter %s API error: %s", adapter.name, e)
+        if breaker:
+            breaker.record_failure()
+        return None
+```
+
 **Step 4: Run tests**
 
 Run: `pytest tests/unit/test_primary_cortex.py tests/unit/ -v --tb=short`
@@ -1504,6 +1691,12 @@ class TestServerRoutes:
         assert resp.status == 200
 ```
 
+> **Amendment 10:** HTTP server is externally-facing — minimum 4 error path tests required:
+> 1. `test_chat_endpoint_malformed_json` — POST non-JSON body, assert 400
+> 2. `test_chat_endpoint_missing_required_field` — POST `{}` without `message`, assert 400
+> 3. `test_websocket_auth_failure` — connect without valid token, assert rejected
+> 4. `test_chat_endpoint_hive_loop_timeout` — mock HiveLoop.think() to raise asyncio.TimeoutError, assert 504
+
 **Step 2: Run tests, verify fail**
 
 Run: `pytest tests/unit/test_server.py -v`
@@ -1573,7 +1766,7 @@ async def chat(request: web.Request) -> web.Response:
     """Chat endpoint — send a message to Vecna."""
     try:
         data = await request.json()
-    except Exception:
+    except json.JSONDecodeError:
         return web.json_response(
             {"error": "Invalid JSON"}, status=400
         )
@@ -1611,7 +1804,7 @@ async def webhook_ingest(request: web.Request) -> web.Response:
     """Ingest webhook events from external services."""
     try:
         data = await request.json()
-    except Exception:
+    except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
     source = data.get("source", "unknown")
@@ -1977,6 +2170,10 @@ class TestIntegrationConfig:
         assert restored.is_enabled("mock")
 ```
 
+> **Amendment 10:** Minimum 2 error path tests required:
+> 1. `test_integration_event_invalid_source` — unknown source type, assert handled gracefully
+> 2. `test_integration_config_missing_credentials` — missing required fields, assert clear error
+
 **Step 2: Run tests, verify fail**
 
 Run: `pytest tests/unit/test_integration_framework.py -v`
@@ -2091,6 +2288,9 @@ class IntegrationConfig:
         return self._credentials.get(name, {})
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         return {
             "enabled": list(self._enabled),
             "credentials": {},  # Never serialize credentials
@@ -2333,7 +2533,7 @@ git commit -m "feat: add channel adapter system with base class and CLI channel"
 ### Task 10: Goal Queue Migration — File to PostgreSQL
 
 **Files:**
-- Create: `vecna/orchestrator/pg_goal_queue.py`
+- Modify: `vecna/orchestrator/pg_goal_queue.py` (file already exists — extend, don't recreate)
 - Modify: `vecna/orchestrator/autonomy.py` (support both backends)
 - Create: `vecna/migrations/versions/xxx_add_goal_queue_table.py`
 - Create: `tests/unit/test_pg_goal_queue.py`
@@ -2439,6 +2639,9 @@ class GoalItem:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         return {
             "goal_id": self.goal_id,
             "goal": self.goal,
@@ -2586,6 +2789,7 @@ class TestHeartbeatActions:
         assert action.last_run is None
         action.mark_run()
         assert action.last_run is not None
+        # Amendment 9: Strengthen — assert action.last_run is approximately datetime.now(), not just existence.
 
 
 class TestHeartbeatConfig:
@@ -3044,6 +3248,7 @@ class TestDreamLoopRunV2:
         # Phase 5 and 6 should have run (dry_run counts)
         assert isinstance(result.autonomous_tasks_generated, int)
         assert isinstance(result.counterfactuals_generated, int)
+        # Amendment 9: Strengthen — assert specific counts (e.g. >= 0), not just type. Verify result.phases_completed includes expected phases.
 
 
 class TestCuriosityEngineFromDreamPatterns:
@@ -3105,6 +3310,9 @@ class DreamResult:
     errors: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         return {
             "events_compressed": self.events_compressed,
             "episodes_created": self.episodes_created,
@@ -3172,7 +3380,7 @@ class DreamLoop:
             counterfactuals = self._generate_counterfactuals(dry_run)
             result.counterfactuals_generated = counterfactuals
 
-        except Exception as e:
+        except (KeyError, ValueError, TypeError) as e:
             logger.error(f"Dream loop error: {e}")
             result.errors.append(str(e))
 
@@ -3252,7 +3460,7 @@ class DreamLoop:
             logger.info(f"Phase 5: generated {generated} autonomous goals")
             return generated
 
-        except Exception as e:
+        except (KeyError, ValueError, TypeError) as e:
             logger.error(f"Autonomous task generation error: {e}")
             return 0
 
@@ -3308,7 +3516,7 @@ class DreamLoop:
                     )
                     try:
                         counterfactual_text = self.summarizer(prompt)
-                    except Exception as e:
+                    except (OSError, RuntimeError) as e:
                         logger.error(f"Counterfactual summarization failed: {e}")
 
                 if dry_run:
@@ -3339,7 +3547,7 @@ class DreamLoop:
             logger.info(f"Phase 6: generated {generated} counterfactual hypotheses")
             return generated
 
-        except Exception as e:
+        except (KeyError, ValueError, TypeError) as e:
             logger.error(f"Counterfactual generation error: {e}")
             return 0
 ```
@@ -3397,6 +3605,19 @@ git add vecna/memory/dream_loop.py vecna/orchestrator/curiosity.py tests/unit/te
 git commit -m "feat: DreamLoop v2 with autonomous task generation and counterfactual exploration"
 ```
 
+> **Amendment 15:** The `_reinforce_memories()` and `_decay_memories()` methods must use
+> batched SQL operations. Replace per-item UPDATEs with:
+> ```sql
+> UPDATE memory_events SET reinforcement_count = data.new_count
+> FROM (VALUES ($1, $2), ($3, $4), ...) AS data(id, new_count)
+> WHERE memory_events.id = data.id
+> ```
+> Also: store `source_event_ids` as a JSONB array (`[1, 2, 3]`), not a stringified
+> comma-delimited format. Use `@>` containment operator with GIN index for lookups.
+> This requires an Alembic migration to change the column format. The current `LIKE`
+> pattern matching on stringified JSON (`'%%' || id::text || '%%'`) is both slow
+> (full sequential scan) and incorrect (ID 1 matches ID 10, 100, etc.).
+
 ---
 
 ### Task 14: Background Observer — Passive Integration Intake
@@ -3440,6 +3661,7 @@ class TestIntegrationEvent:
     def test_event_has_timestamp(self):
         event = IntegrationEvent(source="slack", event_type="message")
         assert isinstance(event.timestamp, datetime)
+        # Amendment 9: Strengthen — assert timestamp is recent (e.g. within last 5 seconds), not just type.
 
     def test_event_to_dict(self):
         event = IntegrationEvent(
@@ -3716,13 +3938,9 @@ class IntegrationEvent:
     payload: Dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "source": self.source,
-            "event_type": self.event_type,
-            "payload": self.payload,
-            "timestamp": self.timestamp.isoformat(),
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 @dataclass
@@ -3754,13 +3972,9 @@ class ObserverResult:
     rate_limited: bool = False
     classification: Optional[EventClassification] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "facts_created": self.facts_created,
-            "goals_created": self.goals_created,
-            "skipped": self.skipped,
-            "rate_limited": self.rate_limited,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 class BackgroundObserver:
@@ -3916,7 +4130,7 @@ class BackgroundObserver:
                 },
             )
             self.pg_store.add_event(mem_event)
-        except Exception as e:
+        except sqlalchemy.exc.SQLAlchemyError as e:
             logger.error(f"Failed to record memory event: {e}")
 
     def _create_observation_fact(
@@ -3948,7 +4162,7 @@ class BackgroundObserver:
             )
             result = self.pg_store.add_item(item)
             return result is not None
-        except Exception as e:
+        except sqlalchemy.exc.SQLAlchemyError as e:
             logger.error(f"Failed to create observation fact: {e}")
             return False
 
@@ -3980,7 +4194,7 @@ class BackgroundObserver:
             )
             self.goal_queue.push(goal_item)
             return True
-        except Exception as e:
+        except sqlalchemy.exc.SQLAlchemyError as e:
             logger.error(f"Failed to create goal: {e}")
             return False
 ```
@@ -4054,6 +4268,7 @@ class TestCommandAllowlist:
 
     def test_allowlist_is_frozen(self):
         assert isinstance(COMMAND_ALLOWLIST, frozenset)
+        # Amendment 9: Strengthen — assert COMMAND_ALLOWLIST contains expected commands and has expected length, not just type.
 
 
 class TestGogcliResult:
@@ -4272,13 +4487,9 @@ class GogcliResult:
     error: str = ""
     raw_output: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "success": self.success,
-            "command": self.command,
-            "data": self.data,
-            "error": self.error,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 class GoogleSuiteIntegration(BaseIntegration):
@@ -4360,7 +4571,7 @@ class GoogleSuiteIntegration(BaseIntegration):
         except FileNotFoundError:
             logger.error("gogcli binary not found")
             return (1, "", "gogcli binary not found")
-        except Exception as e:
+        except OSError as e:
             logger.error(f"gogcli execution error: {e}")
             return (1, "", str(e))
 
@@ -4846,7 +5057,7 @@ class iMessageChannel(BaseChannel):
             return (1, "", "imsg send timed out")
         except FileNotFoundError:
             return (1, "", "imsg binary not found")
-        except Exception as e:
+        except OSError as e:
             return (1, "", str(e))
 
     async def send(self, message: OutboundMessage) -> bool:
@@ -4913,7 +5124,7 @@ class iMessageChannel(BaseChannel):
             try:
                 self._watch_process.terminate()
                 await self._watch_process.wait()
-            except Exception as e:
+            except OSError as e:  # Cleanup: broad catch acceptable
                 logger.error(f"Error stopping imsg watch: {e}")
             self._watch_process = None
 
@@ -5324,13 +5535,9 @@ class WacliResult:
     error: str = ""
     raw_output: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "success": self.success,
-            "command": self.command,
-            "data": self.data,
-            "error": self.error,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 class WhatsAppChannel(BaseChannel):
@@ -5420,7 +5627,7 @@ class WhatsAppChannel(BaseChannel):
             return (1, "", f"wacli command timed out after {timeout}s")
         except FileNotFoundError:
             return (1, "", "wacli binary not found")
-        except Exception as e:
+        except OSError as e:
             return (1, "", str(e))
 
     async def send(self, message: OutboundMessage) -> bool:
@@ -5521,7 +5728,7 @@ class WhatsAppChannel(BaseChannel):
             try:
                 self._watch_process.terminate()
                 await self._watch_process.wait()
-            except Exception as e:
+            except OSError as e:  # Cleanup: broad catch acceptable
                 logger.error(f"Error stopping wacli watch: {e}")
             self._watch_process = None
 
@@ -5868,16 +6075,9 @@ class SummarizeResult:
     raw_output: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "success": self.success,
-            "url": self.url,
-            "summary": self.summary,
-            "title": self.title,
-            "content_type": self.content_type,
-            "word_count": self.word_count,
-            "error": self.error,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 class SummarizeTool:
@@ -5915,7 +6115,7 @@ class SummarizeTool:
             return (1, "", f"Summarize timed out after {effective_timeout}s")
         except FileNotFoundError:
             return (1, "", "summarize binary not found")
-        except Exception as e:
+        except OSError as e:
             return (1, "", str(e))
 
     async def summarize(
@@ -6149,6 +6349,7 @@ class TestBrowserConfig:
         assert config.timeout == 30.0
         assert config.max_content_length == 50000
         assert config.user_agent is not None
+        # Amendment 9: Strengthen — assert config.user_agent contains expected substring (e.g. "Vecna" or "Mozilla"), not just existence.
 
     def test_custom_config(self):
         config = BrowserConfig(headless=False, timeout=60.0)
@@ -6286,6 +6487,7 @@ class TestBrowserToolNavigation:
         result = await tool.navigate("https://example.com")
         assert result.success
         assert result.content is not None
+        # Amendment 9: Strengthen — assert result.content.url, result.content.text length, etc., not just existence.
         assert result.content.title == "Example Page"
 
     async def test_navigate_handles_timeout(self):
@@ -6451,6 +6653,9 @@ class PageContent:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         return {
             "url": self.url,
             "title": self.title,
@@ -6476,6 +6681,9 @@ class BrowserResult:
     error: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         result: Dict[str, Any] = {
             "success": self.success,
             "action": self.action,
@@ -6521,7 +6729,7 @@ class BrowserTool:
                 "Playwright is not installed. Install with: pip install playwright && "
                 "playwright install chromium"
             )
-        except Exception as e:
+        except playwright.async_api.Error as e:
             logger.error(f"Failed to start browser: {e}")
             raise
 
@@ -6530,21 +6738,21 @@ class BrowserTool:
         if self._current_page:
             try:
                 await self._current_page.close()
-            except Exception:
+            except playwright.async_api.Error:  # Cleanup: broad catch acceptable
                 pass
             self._current_page = None
 
         if self._browser:
             try:
                 await self._browser.close()
-            except Exception:
+            except playwright.async_api.Error:  # Cleanup: broad catch acceptable
                 pass
             self._browser = None
 
         if self._playwright_ctx:
             try:
                 await self._playwright_ctx.__aexit__(None, None, None)
-            except Exception:
+            except playwright.async_api.Error:  # Cleanup: broad catch acceptable
                 pass
             self._playwright_ctx = None
 
@@ -6602,12 +6810,12 @@ class BrowserTool:
                 content=content,
             )
 
-        except Exception as e:
+        except playwright.async_api.Error as e:
             logger.error(f"Navigation error for {url}: {e}")
             if page:
                 try:
                     await page.close()
-                except Exception:
+                except playwright.async_api.Error:  # Cleanup: broad catch acceptable
                     pass
             return BrowserResult(
                 success=False,
@@ -6652,12 +6860,12 @@ class BrowserTool:
                 screenshot_b64=screenshot_b64,
             )
 
-        except Exception as e:
+        except playwright.async_api.Error as e:
             logger.error(f"Screenshot error for {url}: {e}")
             if page:
                 try:
                     await page.close()
-                except Exception:
+                except playwright.async_api.Error:  # Cleanup: broad catch acceptable
                     pass
             return BrowserResult(
                 success=False,
@@ -6700,7 +6908,7 @@ class BrowserTool:
                 content=content,
             )
 
-        except Exception as e:
+        except playwright.async_api.Error as e:
             logger.error(f"Click error for selector '{selector}': {e}")
             return BrowserResult(
                 success=False,
@@ -6738,7 +6946,7 @@ async def browser_navigate_executor(
     if not tool.is_running:
         try:
             await tool.start()
-        except Exception as e:
+        except (RuntimeError, playwright.async_api.Error) as e:
             return ToolResult(
                 tool_name="browser_navigate",
                 success=False,
@@ -6783,7 +6991,7 @@ async def browser_screenshot_executor(
     if not tool.is_running:
         try:
             await tool.start()
-        except Exception as e:
+        except (RuntimeError, playwright.async_api.Error) as e:
             return ToolResult(
                 tool_name="browser_screenshot",
                 success=False,
@@ -7184,7 +7392,7 @@ class ComposioBridge:
                 logger.warning(
                     "Composio SDK not installed. Install with: pip install composio-core"
                 )
-            except Exception as e:
+            except (RuntimeError, ConnectionError) as e:
                 logger.error(f"Failed to initialize Composio: {e}")
 
     @property
@@ -7241,7 +7449,7 @@ class ComposioBridge:
                         app_name=action.get("app", "unknown"),
                     )
                 )
-        except Exception as e:
+        except (RuntimeError, ConnectionError) as e:
             logger.error(f"Failed to load actions from Composio SDK: {e}")
             return self._load_default_actions()
 
@@ -7321,7 +7529,7 @@ class ComposioBridge:
                     output=output,
                     metadata={"action": action_name, "args": args},
                 )
-            except Exception as e:
+            except (RuntimeError, ConnectionError) as e:
                 logger.error(f"Composio action '{action_name}' failed: {e}")
                 return ToolResult(
                     tool_name=f"composio_{action_name}",
@@ -7657,6 +7865,7 @@ class TestFactoryRouting:
         )
         adapter = create_adapter(config)
         assert isinstance(adapter, OpenAIAdapter)
+        # Amendment 9: Strengthen — assert adapter.model_id == "gpt-4-turbo" and adapter.api_key is set, not just type.
 
     def test_factory_creates_anthropic_adapter(self):
         """create_adapter routes to AnthropicAdapter for anthropic provider."""
@@ -7668,6 +7877,7 @@ class TestFactoryRouting:
         )
         adapter = create_adapter(config)
         assert isinstance(adapter, AnthropicAdapter)
+        # Amendment 9: Strengthen — assert adapter.model_id == "claude-3-sonnet-20240229" and adapter.api_key is set, not just type.
 
 
 class TestProviderEnum:
@@ -7683,6 +7893,12 @@ class TestProviderEnum:
         from vecna.config.schema import Provider
         assert hasattr(Provider, "ANTHROPIC")
 ```
+
+> **Amendment 10:** Native adapters are externally-facing — minimum 4 error path tests per adapter:
+> 1. `test_openai_rate_limit_error` — mock 429 response, assert graceful retry/failure
+> 2. `test_openai_timeout_error` — mock timeout, assert None response (not crash)
+> 3. `test_anthropic_invalid_api_key` — mock 401 response, assert clear error message
+> 4. `test_anthropic_context_length_exceeded` — mock 400 with context_length error, assert truncation or error
 
 **Step 2: Run tests, see them fail**
 
@@ -7712,74 +7928,13 @@ logger = logging.getLogger("vecna.openai_adapter")
 
 
 def _build_hive_update_tool() -> Dict[str, Any]:
-    """Build the hive_update function tool schema for OpenAI."""
+    """Build hive_update tool schema in OpenAI format. See Amendment 5."""
+    # Amendment 5: Use shared build_hive_update_tool_schema() and wrap in OpenAI format.
+    from vecna.adapters.tool_calling import build_hive_update_tool_schema
+    schema = build_hive_update_tool_schema()
     return {
         "type": "function",
-        "function": {
-            "name": "hive_update",
-            "description": (
-                "Submit structured updates to the hive mind state "
-                "including facts, beliefs, hypotheses, and a response."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "facts": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "content": {"type": "string"},
-                                "confidence": {
-                                    "type": "number",
-                                    "minimum": 0.0,
-                                    "maximum": 1.0,
-                                },
-                            },
-                            "required": ["content", "confidence"],
-                        },
-                        "description": "New facts discovered.",
-                    },
-                    "beliefs": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "content": {"type": "string"},
-                                "confidence": {
-                                    "type": "number",
-                                    "minimum": 0.0,
-                                    "maximum": 1.0,
-                                },
-                            },
-                            "required": ["content", "confidence"],
-                        },
-                        "description": "Updated beliefs.",
-                    },
-                    "hypotheses": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "content": {"type": "string"},
-                                "confidence": {
-                                    "type": "number",
-                                    "minimum": 0.0,
-                                    "maximum": 1.0,
-                                },
-                            },
-                            "required": ["content", "confidence"],
-                        },
-                        "description": "New hypotheses.",
-                    },
-                    "response": {
-                        "type": "string",
-                        "description": "The response to the user.",
-                    },
-                },
-                "required": ["response"],
-            },
-        },
+        "function": schema,
     }
 
 
@@ -7859,7 +8014,7 @@ class OpenAIAdapter(BaseAdapter):
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
             )
-        except Exception as e:
+        except openai.APIError as e:
             logger.error("OpenAI API call failed: %s", e)
             raise
 
@@ -7897,52 +8052,17 @@ class OpenAIAdapter(BaseAdapter):
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
-        except Exception as e:
+        except openai.APIError as e:
             logger.error("OpenAI streaming failed: %s", e)
             raise
 
     def parse_update(self, output: str) -> HiveUpdate:
-        """Parse a tool call JSON response into HiveUpdate.
+        """Parse tool call JSON into HiveUpdate. See Amendment 5."""
+        # Amendment 5: Use shared parse_tool_call_update() from tool_calling.py
+        # instead of duplicating parsing logic here.
+        from vecna.adapters.tool_calling import parse_tool_call_update
+        return parse_tool_call_update(output, source_model=self.config.name)
 
-        Attempts JSON parsing first (for tool call responses),
-        then falls back to the base YAML parser.
-
-        Args:
-            output: Raw model output string.
-
-        Returns:
-            Parsed HiveUpdate.
-        """
-        try:
-            data = json.loads(output)
-            facts = []
-            for f in data.get("facts", []):
-                facts.append(Fact(
-                    content=f["content"],
-                    confidence=f.get("confidence", 0.5),
-                    source=self.config.name,
-                ))
-            beliefs = []
-            for b in data.get("beliefs", []):
-                beliefs.append(Belief(
-                    content=b["content"],
-                    confidence=b.get("confidence", 0.5),
-                ))
-            hypotheses = []
-            for h in data.get("hypotheses", []):
-                hypotheses.append(Hypothesis(
-                    content=h["content"],
-                    confidence=h.get("confidence", 0.5),
-                ))
-            return HiveUpdate(
-                facts=facts,
-                beliefs=beliefs,
-                hypotheses=hypotheses,
-                response=data.get("response", ""),
-            )
-        except (json.JSONDecodeError, KeyError):
-            return super().parse_update(output)
-```
 
 **`vecna/adapters/anthropic_adapter.py`:**
 
@@ -7962,65 +8082,14 @@ logger = logging.getLogger("vecna.anthropic_adapter")
 
 
 def _build_hive_update_tool_anthropic() -> Dict[str, Any]:
-    """Build the hive_update tool schema for Anthropic."""
+    """Build hive_update tool schema in Anthropic format. See Amendment 5."""
+    # Amendment 5: Use shared build_hive_update_tool_schema() and wrap in Anthropic format.
+    from vecna.adapters.tool_calling import build_hive_update_tool_schema
+    schema = build_hive_update_tool_schema()
     return {
-        "name": "hive_update",
-        "description": (
-            "Submit structured updates to the hive mind state "
-            "including facts, beliefs, hypotheses, and a response."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "facts": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {"type": "string"},
-                            "confidence": {
-                                "type": "number",
-                            },
-                        },
-                        "required": ["content", "confidence"],
-                    },
-                    "description": "New facts discovered.",
-                },
-                "beliefs": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {"type": "string"},
-                            "confidence": {
-                                "type": "number",
-                            },
-                        },
-                        "required": ["content", "confidence"],
-                    },
-                    "description": "Updated beliefs.",
-                },
-                "hypotheses": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {"type": "string"},
-                            "confidence": {
-                                "type": "number",
-                            },
-                        },
-                        "required": ["content", "confidence"],
-                    },
-                    "description": "New hypotheses.",
-                },
-                "response": {
-                    "type": "string",
-                    "description": "The response to the user.",
-                },
-            },
-            "required": ["response"],
-        },
+        "name": schema["name"],
+        "description": schema["description"],
+        "input_schema": schema["parameters"],
     }
 
 
@@ -8088,7 +8157,7 @@ class AnthropicAdapter(BaseAdapter):
                 messages=[{"role": "user", "content": prompt}],
                 tools=tools,
             )
-        except Exception as e:
+        except anthropic.APIError as e:
             logger.error("Anthropic API call failed: %s", e)
             raise
 
@@ -8126,52 +8195,17 @@ class AnthropicAdapter(BaseAdapter):
                     if event.type == "content_block_delta":
                         if event.delta.type == "text_delta":
                             yield event.delta.text
-        except Exception as e:
+        except anthropic.APIError as e:
             logger.error("Anthropic streaming failed: %s", e)
             raise
 
     def parse_update(self, output: str) -> HiveUpdate:
-        """Parse a tool use JSON response into HiveUpdate.
+        """Parse tool use JSON into HiveUpdate. See Amendment 5."""
+        # Amendment 5: Use shared parse_tool_call_update() from tool_calling.py
+        # instead of duplicating parsing logic here.
+        from vecna.adapters.tool_calling import parse_tool_call_update
+        return parse_tool_call_update(output, source_model=self.config.name)
 
-        Attempts JSON parsing first (for tool use responses),
-        then falls back to the base YAML parser.
-
-        Args:
-            output: Raw model output string.
-
-        Returns:
-            Parsed HiveUpdate.
-        """
-        try:
-            data = json.loads(output)
-            facts = []
-            for f in data.get("facts", []):
-                facts.append(Fact(
-                    content=f["content"],
-                    confidence=f.get("confidence", 0.5),
-                    source=self.config.name,
-                ))
-            beliefs = []
-            for b in data.get("beliefs", []):
-                beliefs.append(Belief(
-                    content=b["content"],
-                    confidence=b.get("confidence", 0.5),
-                ))
-            hypotheses = []
-            for h in data.get("hypotheses", []):
-                hypotheses.append(Hypothesis(
-                    content=h["content"],
-                    confidence=h.get("confidence", 0.5),
-                ))
-            return HiveUpdate(
-                facts=facts,
-                beliefs=beliefs,
-                hypotheses=hypotheses,
-                response=data.get("response", ""),
-            )
-        except (json.JSONDecodeError, KeyError):
-            return super().parse_update(output)
-```
 
 **`vecna/config/schema.py`** (add to Provider enum):
 
@@ -8316,11 +8350,14 @@ class TestPreferenceExtraction:
             name="test-hm",
         )
         loop._human_model = HumanModel()
+        # Amendment 11: Pass human_model as constructor parameter to HiveLoop.
         signals = loop._extract_preference_signals(
             task="Be concise please",
             response="Got it, I'll be concise.",
         )
+        # Amendment 11: Make extract_preference_signals() a public method.
         assert isinstance(signals, list)
+        # Amendment 9: Strengthen — assert signals is not empty and contains expected signal types/values, not just type.
 
     def test_preference_signals_detect_style_request(self):
         """Preference extraction detects communication style cues."""
@@ -8334,10 +8371,12 @@ class TestPreferenceExtraction:
             name="test-hm",
         )
         loop._human_model = HumanModel()
+        # Amendment 11: Pass human_model as constructor parameter to HiveLoop.
         signals = loop._extract_preference_signals(
             task="Give me a detailed explanation",
             response="Here is a thorough breakdown...",
         )
+        # Amendment 11: Make extract_preference_signals() a public method.
         found_detail = any(
             s.get("dimension") == "detail_level" for s in signals
         )
@@ -8359,6 +8398,7 @@ class TestHumanModelPersistence:
             name="test-hm",
         )
         loop._human_model = HumanModel()
+        # Amendment 11: Pass human_model as constructor parameter to HiveLoop.
         initial = loop._human_model.interaction_count
         loop._human_model.interaction_count += 1
         assert loop._human_model.interaction_count == initial + 1
@@ -8391,6 +8431,7 @@ class TestHumanModelPersistence:
             name="test-hm",
         )
         loop._human_model = HumanModel()
+        # Amendment 11: Pass human_model as constructor parameter to HiveLoop.
         loop._human_model.add_preference(
             dimension="expertise",
             value="advanced",
@@ -8399,6 +8440,7 @@ class TestHumanModelPersistence:
         result = await loop.think("Explain recursion")
         assert isinstance(result, str)
         assert len(result) > 0
+        # Amendment 9: Strengthen — assert result contains domain-relevant content (e.g. "recursion"), not just type/length.
 
     async def test_think_updates_human_model_interaction_count(self):
         """think() increments human_model.interaction_count."""
@@ -8412,6 +8454,7 @@ class TestHumanModelPersistence:
             name="test-hm",
         )
         loop._human_model = HumanModel()
+        # Amendment 11: Pass human_model as constructor parameter to HiveLoop.
         initial = loop._human_model.interaction_count
         await loop.think("Hello")
         assert loop._human_model.interaction_count > initial
@@ -8619,6 +8662,7 @@ class TestProactiveMessage:
         assert msg.trigger == "follow_up"
         assert msg.relevance_score == 0.8
         assert msg.created_at is not None
+        # Amendment 9: Strengthen — assert msg.created_at is recent (within last few seconds), not just existence.
         assert msg.expires_at is None
 
     def test_proactive_message_to_dict(self):
@@ -8680,12 +8724,12 @@ class TestThoughtfulnessEngine:
         state.add_fact(Fact(
             content="User is learning Rust programming",
             confidence=0.9,
-            source="conversation",
+            source_model="conversation",
         ))
         state.add_fact(Fact(
             content="User has a project deadline on Friday",
             confidence=0.85,
-            source="conversation",
+            source_model="conversation",
         ))
         messages = engine.generate_follow_ups(state)
         assert isinstance(messages, list)
@@ -8731,6 +8775,7 @@ class TestThoughtfulnessEngine:
                 trigger="insight",
                 relevance_score=0.7,
             ))
+        # Amendment 11: Make enqueue_message() a public method, or test via generate_messages() output.
         pending = engine.get_pending_messages()
         assert len(pending) <= 3
 
@@ -8749,6 +8794,7 @@ class TestThoughtfulnessEngine:
             relevance_score=0.8,
             expires_at=datetime.now() + timedelta(hours=24),
         ))
+        # Amendment 11: Make enqueue_message() a public method, or test via generate_messages() output.
         pending = engine.get_pending_messages()
         assert len(pending) == 1
         assert pending[0].content == "Valid"
@@ -8771,6 +8817,7 @@ class TestThoughtfulnessEngine:
             trigger="dream",
             relevance_score=0.6,
         ))
+        # Amendment 11: Make enqueue_message() a public method, or test via generate_messages() output.
         pending = engine.get_pending_messages()
         assert pending[0].content == "High relevance"
         assert pending[-1].content == "Low relevance"
@@ -8783,6 +8830,7 @@ class TestThoughtfulnessEngine:
             trigger="insight",
             relevance_score=0.7,
         ))
+        # Amendment 11: Make enqueue_message() a public method, or test via generate_messages() output.
         assert len(engine.get_pending_messages()) == 1
         engine.clear_delivered()
         assert len(engine.get_pending_messages()) == 0
@@ -8802,6 +8850,7 @@ class TestThoughtfulnessEngine:
             trigger="insight",
             relevance_score=0.7,
         ))
+        # Amendment 11: Make enqueue_message() a public method, or test via generate_messages() output.
         d = engine.to_dict()
         assert "pending_messages" in d
         assert "daily_message_count" in d
@@ -8871,6 +8920,9 @@ class ProactiveMessage:
         return datetime.now() > self.expires_at
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         """Serialize to dictionary."""
         return {
             "content": self.content,
@@ -9047,6 +9099,9 @@ class ThoughtfulnessEngine:
         logger.debug("Daily message count reset")
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         """Serialize engine state."""
         return {
             "pending_messages": [m.to_dict() for m in self._pending],
@@ -9069,7 +9124,7 @@ async def _run_thoughtfulness(self) -> None:
             self._autonomy_loop.state
         )
         logger.debug("Thoughtfulness heartbeat completed")
-    except Exception as e:
+    except (KeyError, ValueError, TypeError) as e:
         logger.warning("Thoughtfulness heartbeat failed: %s", e)
 ```
 
@@ -9156,6 +9211,7 @@ class TestSessionContext:
         assert ctx.channel_name == "cli"
         assert ctx.history == []
         assert ctx.created_at is not None
+        # Amendment 9: Strengthen — assert ctx.created_at is recent (within last few seconds), not just existence.
 
     def test_session_context_to_dict(self):
         """SessionContext serializes correctly."""
@@ -9214,6 +9270,7 @@ class TestMessageRouterRegistration:
         channel = MockChannel("cli")
         router.register_channel("cli", channel)
         assert "cli" in router._channels
+        # Amendment 11: Use router.list_channels() instead of router._channels.
 
     def test_register_multiple_channels(self):
         """Multiple channels can be registered."""
@@ -9222,6 +9279,7 @@ class TestMessageRouterRegistration:
         router.register_channel("slack", MockChannel("slack", "markdown"))
         router.register_channel("sms", MockChannel("sms", "plain"))
         assert len(router._channels) == 3
+        # Amendment 11: Use router.list_channels() instead of router._channels.
 
     def test_list_channels(self):
         """list_channels returns registered channel names."""
@@ -9238,6 +9296,7 @@ class TestMessageRouterRegistration:
         router.register_channel("cli", MockChannel("cli"))
         router.unregister_channel("cli")
         assert "cli" not in router._channels
+        # Amendment 11: Use router.list_channels() instead of router._channels.
 
 
 class TestMessageRouterRouting:
@@ -9248,6 +9307,7 @@ class TestMessageRouterRouting:
         router = MessageRouter()
         loop = MockHiveLoop(response="Hello user")
         router._hive_loop = loop
+        # Amendment 11: Pass hive_loop as constructor parameter instead of setting private attribute.
         router.register_channel("cli", MockChannel("cli"))
         msg = InboundMessage(
             content="Hello",
@@ -9256,13 +9316,16 @@ class TestMessageRouterRouting:
         )
         response = await router.route_inbound(msg)
         assert response is not None
+        # Amendment 9: Strengthen — assert response contains expected content from MockHiveLoop, not just existence.
         assert "sess-new" in router._sessions
+        # Amendment 11: Use router.get_session(id) / router.get_session_count() instead of router._sessions.
 
     async def test_route_inbound_returns_response(self):
         """Routing returns the HiveLoop response."""
         router = MessageRouter()
         loop = MockHiveLoop(response="Thought result")
         router._hive_loop = loop
+        # Amendment 11: Pass hive_loop as constructor parameter instead of setting private attribute.
         router.register_channel("cli", MockChannel("cli"))
         msg = InboundMessage(
             content="Think about this",
@@ -9277,6 +9340,7 @@ class TestMessageRouterRouting:
         router = MessageRouter()
         loop = MockHiveLoop()
         router._hive_loop = loop
+        # Amendment 11: Pass hive_loop as constructor parameter instead of setting private attribute.
         router.register_channel("cli", MockChannel("cli"))
         msg = InboundMessage(
             content="Analyze data",
@@ -9291,6 +9355,7 @@ class TestMessageRouterRouting:
         router = MessageRouter()
         loop = MockHiveLoop(response="Reply")
         router._hive_loop = loop
+        # Amendment 11: Pass hive_loop as constructor parameter instead of setting private attribute.
         router.register_channel("cli", MockChannel("cli"))
         msg = InboundMessage(
             content="First message",
@@ -9299,6 +9364,7 @@ class TestMessageRouterRouting:
         )
         await router.route_inbound(msg)
         session = router._sessions["sess-hist"]
+        # Amendment 11: Use router.get_session(id) / router.get_session_count() instead of router._sessions.
         assert len(session.history) == 2
         assert session.history[0]["role"] == "user"
         assert session.history[1]["role"] == "assistant"
@@ -9308,6 +9374,7 @@ class TestMessageRouterRouting:
         router = MessageRouter()
         loop = MockHiveLoop(response="Reply")
         router._hive_loop = loop
+        # Amendment 11: Pass hive_loop as constructor parameter instead of setting private attribute.
         router.register_channel("cli", MockChannel("cli"))
         for i in range(3):
             msg = InboundMessage(
@@ -9317,6 +9384,7 @@ class TestMessageRouterRouting:
             )
             await router.route_inbound(msg)
         session = router._sessions["sess-multi"]
+        # Amendment 11: Use router.get_session(id) / router.get_session_count() instead of router._sessions.
         assert len(session.history) == 6
 
 
@@ -9329,8 +9397,10 @@ class TestFormatAdaptation:
         result = router._format_for_channel(
             "**bold** text", "cli"
         )
+        # Amendment 11: Make format_for_channel() a public method.
         assert isinstance(result, str)
         assert len(result) > 0
+        # Amendment 9: Strengthen — assert result preserves or transforms markup as expected (e.g. contains "bold"), not just type/length.
 
     def test_format_for_sms(self):
         """SMS format strips markdown to plain text."""
@@ -9338,6 +9408,7 @@ class TestFormatAdaptation:
         result = router._format_for_channel(
             "**bold** and *italic*", "sms"
         )
+        # Amendment 11: Make format_for_channel() a public method.
         assert "**" not in result
         assert "*" not in result
 
@@ -9347,6 +9418,7 @@ class TestFormatAdaptation:
         result = router._format_for_channel(
             "**bold** text", "slack"
         )
+        # Amendment 11: Make format_for_channel() a public method.
         assert "bold" in result
 
     def test_format_for_unknown_channel(self):
@@ -9355,6 +9427,7 @@ class TestFormatAdaptation:
         result = router._format_for_channel(
             "Some text", "unknown"
         )
+        # Amendment 11: Make format_for_channel() a public method.
         assert result == "Some text"
 
 
@@ -9375,6 +9448,7 @@ class TestRouterState:
         router._sessions["s2"] = SessionContext(
             session_id="s2", channel_name="slack"
         )
+        # Amendment 11: Use router.get_session(id) / router.get_session_count() instead of router._sessions.
         active = router.get_active_sessions()
         assert len(active) == 2
 
@@ -9386,6 +9460,7 @@ class TestRouterState:
         )
         router.close_session("s1")
         assert "s1" not in router._sessions
+        # Amendment 11: Use router.get_session(id) / router.get_session_count() instead of router._sessions.
 
     def test_router_to_dict(self):
         """Router state serializes correctly."""
@@ -9394,6 +9469,7 @@ class TestRouterState:
         router._sessions["s1"] = SessionContext(
             session_id="s1", channel_name="cli"
         )
+        # Amendment 11: Use router.get_session(id) / router.get_session_count() instead of router._sessions.
         d = router.to_dict()
         assert "channels" in d
         assert "sessions" in d
@@ -9442,14 +9518,9 @@ class SessionContext:
     history: List[Dict[str, str]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "session_id": self.session_id,
-            "channel_name": self.channel_name,
-            "history": list(self.history),
-            "created_at": self.created_at.isoformat(),
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 @dataclass
@@ -9671,6 +9742,9 @@ class MessageRouter:
         logger.debug("Session closed: %s", session_id)
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         """Serialize router state."""
         return {
             "channels": list(self._channels.keys()),
@@ -9724,6 +9798,7 @@ class TestSubstratePanel:
         """SubstratePanel initializes with empty state."""
         panel = SubstratePanel()
         assert panel is not None
+        # Amendment 9: Strengthen — assert panel has expected default attributes (e.g. panel.facts_count == 0), not just existence.
 
     def test_substrate_panel_update_facts(self):
         """SubstratePanel can update fact display count."""
@@ -9785,6 +9860,7 @@ class TestVecnaTUI:
     def test_tui_app_css_defined(self):
         """VecnaTUI has CSS styles defined."""
         assert VecnaTUI.CSS is not None or VecnaTUI.CSS_PATH is not None
+        # Amendment 9: Strengthen — assert CSS contains expected selectors/rules or CSS_PATH points to existing file, not just existence.
 ```
 
 **Step 2: Run tests, see them fail**
@@ -10307,7 +10383,7 @@ async def chat_handler(request: web.Request) -> web.Response:
     hive_loop = request.app["hive_loop"]
     try:
         response_text = await hive_loop.think(message)
-    except Exception as e:
+    except Exception as e:  # Top-level HTTP handler: broad catch acceptable
         logger.error("HiveLoop.think failed: %s", e)
         return web.json_response(
             {"error": "Internal processing error"},
@@ -10398,7 +10474,7 @@ async def ws_stream_handler(
                     )
             except json.JSONDecodeError:
                 await ws.send_json({"error": "Invalid JSON"})
-            except Exception as e:
+            except Exception as e:  # Top-level WebSocket handler: broad catch acceptable
                 logger.error("WebSocket processing error: %s", e)
                 await ws.send_json({"error": "Processing failed"})
         elif msg.type == WSMsgType.ERROR:
@@ -10481,6 +10557,7 @@ class TestKeyDerivation:
         key = derive_key_from_password("test-password", salt=b"fixed-salt-16b!")
         assert key is not None
         assert len(key) > 0
+        # Amendment 9: Strengthen — assert key is valid base64-encoded Fernet key (44 bytes), not just existence/length.
 
     def test_same_password_same_key(self):
         """Same password and salt produce the same key."""
@@ -10541,7 +10618,7 @@ class TestEncryptedStateStore:
             state.add_fact(Fact(
                 content="Encrypted fact",
                 confidence=0.95,
-                source="test",
+                source_model="test",
             ))
             state.add_belief(Belief(
                 content="Encrypted belief",
@@ -10567,7 +10644,7 @@ class TestEncryptedStateStore:
             state.add_fact(Fact(
                 content="Super secret fact",
                 confidence=0.99,
-                source="test",
+                source_model="test",
             ))
             store.save(state)
             with open(filepath, "rb") as f:
@@ -10583,6 +10660,7 @@ class TestEncryptedStateStore:
         state = store.load()
         assert isinstance(state, HiveState)
         assert len(state.facts) == 0
+        # Amendment 9: Strengthen — also assert state.beliefs == [] and state.goals == [], verifying full empty state.
 
     def test_save_overwrites_existing(self):
         """Second save overwrites the first."""
@@ -10596,7 +10674,7 @@ class TestEncryptedStateStore:
             state1.add_fact(Fact(
                 content="First version",
                 confidence=0.9,
-                source="test",
+                source_model="test",
             ))
             store.save(state1)
 
@@ -10604,7 +10682,7 @@ class TestEncryptedStateStore:
             state2.add_fact(Fact(
                 content="Second version",
                 confidence=0.95,
-                source="test",
+                source_model="test",
             ))
             store.save(state2)
 
@@ -10624,13 +10702,19 @@ class TestEncryptedStateStore:
             state.add_fact(Fact(
                 content="Version test",
                 confidence=0.9,
-                source="test",
+                source_model="test",
             ))
             original_version = state.version
             store.save(state)
             loaded = store.load()
             assert loaded.version == original_version
 ```
+
+> **Amendment 10:** Security is externally-facing — minimum 4 error path tests required:
+> 1. `test_decrypt_with_wrong_key` — encrypt with key A, decrypt with key B, assert clear error
+> 2. `test_load_corrupted_file` — write garbage bytes, assert graceful failure not crash
+> 3. `test_key_rotation_preserves_data` — rotate encryption key, assert old data still accessible
+> 4. `test_concurrent_save_load` — save and load simultaneously, assert no data corruption
 
 **Step 2: Run tests, see them fail**
 
@@ -10823,7 +10907,7 @@ class EncryptedStateStore:
                 self._filepath,
             )
             return state
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error(
                 "Failed to load encrypted state: %s", e
             )
@@ -11110,6 +11194,7 @@ class TestSessionMetrics:
 
         collector.record_session_end("sess-abc")
         assert collector.sessions["sess-abc"].end_time is not None
+        # Amendment 9: Strengthen — assert end_time > start_time and is recent, not just existence.
 
     def test_session_end_nonexistent_is_noop(self):
         """Ending a non-existent session does nothing."""
@@ -11281,15 +11366,9 @@ class TokenUsage:
     total_tokens: int = 0
     timestamp: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "model": self.model,
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "total_tokens": self.total_tokens,
-            "timestamp": self.timestamp.isoformat(),
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 @dataclass
@@ -11303,15 +11382,9 @@ class ConsensusStats:
     avg_agreement_rate: float = 0.0
     _agreement_sum: float = field(default=0.0, repr=False)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "total_merges": self.total_merges,
-            "facts_added": self.facts_added,
-            "beliefs_added": self.beliefs_added,
-            "contradictions_found": self.contradictions_found,
-            "avg_agreement_rate": self.avg_agreement_rate,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 @dataclass
@@ -11331,6 +11404,9 @@ class ToolStats:
         return self.failed / self.total_executions
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         """Serialize to dictionary."""
         return {
             "total_executions": self.total_executions,
@@ -11350,14 +11426,9 @@ class DreamStats:
     facts_reinforced: int = 0
     facts_decayed: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "total_runs": self.total_runs,
-            "insights_generated": self.insights_generated,
-            "facts_reinforced": self.facts_reinforced,
-            "facts_decayed": self.facts_decayed,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 @dataclass
@@ -11370,15 +11441,9 @@ class MetricsSnapshot:
     dream_runs: int = 0
     timestamp: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "total_tokens": self.total_tokens,
-            "consensus_merges": self.consensus_merges,
-            "tool_executions": self.tool_executions,
-            "dream_runs": self.dream_runs,
-            "timestamp": self.timestamp.isoformat(),
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 @dataclass
@@ -11395,15 +11460,9 @@ class IntegrationHealth:
     error_count: int = 0
     last_error: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "name": self.name,
-            "status": self.status,
-            "last_check": self.last_check.isoformat(),
-            "error_count": self.error_count,
-            "last_error": self.last_error,
-        }
+    # Amendment 7: to_dict() provided by SerializableMixin.
+    # Do NOT define to_dict() here — inherit from SerializableMixin instead.
+    # See vecna/core/types.py SerializableMixin for the generic implementation.
 
 
 @dataclass
@@ -11450,6 +11509,9 @@ class HumanModelMetrics:
         return list(self.confidence_snapshots)
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         """Serialize to dictionary."""
         return {
             "confidence_snapshots": list(self.confidence_snapshots),
@@ -11474,6 +11536,9 @@ class SessionMetrics:
     end_time: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        # Amendment 7: Consider if this custom logic can be handled by SerializableMixin's
+        # converter registry. If not, override is acceptable but must call super().to_dict()
+        # and modify the result.
         """Serialize to dictionary."""
         return {
             "session_id": self.session_id,
@@ -11875,6 +11940,7 @@ class TestCLIToHiveLoop:
         assert result is not None
         assert isinstance(result, str)
         assert len(result) > 0
+        # Amendment 9: Strengthen — assert result contains expected mock response content, not just type/existence/length.
 
     async def test_think_updates_state_with_facts(self):
         """HiveLoop.think adds facts to HiveState."""
@@ -11960,11 +12026,12 @@ class TestDreamLoopIntegration:
             state.add_fact(Fact(
                 content=f"Dream test fact number {i}",
                 confidence=0.8 + (i * 0.02),
-                source="test",
+                source_model="test",
             ))
         dream = DreamLoop(state=state, adapter=adapter)
         result = await dream.run()
         assert result is not None
+        # Amendment 9: Strengthen — assert result has expected fields (e.g. result.patterns_found, result.insights), not just existence.
 
 
 class TestHumanModelPersistence:
@@ -12055,6 +12122,7 @@ class TestConfigBootstrap:
         """create_default_config returns a valid VecnaConfig."""
         config = create_default_config()
         assert isinstance(config, VecnaConfig)
+        # Amendment 9: Strengthen — assert config has expected default values (e.g. config.model_name, config.memory_backend), not just type.
 ```
 
 **Step 2: Run tests, see them fail**
@@ -12546,6 +12614,80 @@ Expected: All tests pass
 ```bash
 git add tests/e2e/test_full_stack.py docs/architecture.md docs/integrations.md docs/deployment.md
 git commit -m "docs: add architecture docs and e2e integration tests"
+```
+
+#### Concurrency Stress Tests (Amendment 12)
+
+Add to `tests/unit/test_concurrency.py`:
+
+```python
+class TestConcurrentHiveState:
+    """Amendment 12: Verify shared mutable state under concurrent access."""
+
+    async def test_concurrent_add_fact(self):
+        """50 concurrent add_fact calls must not lose data."""
+        state = HiveState()
+        facts = [Fact(content=f"fact-{i}", confidence=0.5, source_model="test") for i in range(50)]
+        await asyncio.gather(*(
+            asyncio.to_thread(state.add_fact, f) for f in facts
+        ))
+        assert len(state.facts) == 50  # No data loss
+
+    async def test_concurrent_add_belief(self):
+        """50 concurrent add_belief calls must not corrupt state."""
+        state = HiveState()
+        await asyncio.gather(*(
+            asyncio.to_thread(state.add_belief, f"belief-{i}", 0.5, "test")
+            for i in range(50)
+        ))
+        assert len(state.beliefs) == 50
+
+
+class TestConcurrentPgGoalQueue:
+    """Amendment 12: Verify PgGoalQueue under concurrent access."""
+
+    async def test_concurrent_push_pop(self):
+        """50 concurrent push + 50 concurrent pop must not lose items."""
+        queue = PgGoalQueue(session_factory)
+        items = [GoalItem(description=f"goal-{i}", source="test") for i in range(50)]
+        await asyncio.gather(*(queue.push(item) for item in items))
+        results = await asyncio.gather(*(queue.pop() for _ in range(50)))
+        non_none = [r for r in results if r is not None]
+        assert len(non_none) == 50  # No items lost
+
+
+class TestConcurrentMetricsCollector:
+    """Amendment 12: Verify MetricsCollector under concurrent access."""
+
+    async def test_concurrent_record_token_usage(self):
+        """50 concurrent token usage recordings must all be counted."""
+        collector = MetricsCollector()
+        await asyncio.gather(*(
+            asyncio.to_thread(collector.record_token_usage, "test", 100, 50)
+            for _ in range(50)
+        ))
+        snapshot = collector.snapshot()
+        assert snapshot.total_input_tokens == 5000
+        assert snapshot.total_output_tokens == 2500
+
+
+class TestConcurrentMessageRouter:
+    """Amendment 12: Verify MessageRouter under concurrent access."""
+
+    async def test_concurrent_route_inbound(self):
+        """50 concurrent route_inbound calls must not lose messages or corrupt sessions."""
+        router = MessageRouter(hive_loop=mock_loop)
+        router.register_channel("cli", cli_adapter)
+        messages = [
+            InboundMessage(channel="cli", text=f"msg-{i}", session_id=f"sess-{i % 5}")
+            for i in range(50)
+        ]
+        results = await asyncio.gather(*(
+            router.route_inbound(msg) for msg in messages
+        ))
+        non_none = [r for r in results if r is not None]
+        assert len(non_none) == 50  # No messages lost
+        assert router.get_session_count() >= 5  # Amendment 11: use public accessor
 ```
 
 ---
