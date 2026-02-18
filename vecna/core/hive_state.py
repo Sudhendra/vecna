@@ -11,6 +11,7 @@ from datetime import datetime
 import json
 import hashlib
 
+from vecna.core.human_model import HumanModel
 from vecna.core.types import (
     Fact,
     Belief,
@@ -67,6 +68,18 @@ class HiveState:
     # Identity growth metrics/history (mutable self-model evolution only)
     identity_growth_metrics: Dict[str, object] = field(default_factory=dict)
     identity_growth_history: List[Dict] = field(default_factory=list)
+
+    # ============================================================
+    # HUMAN MODEL — Learning the user
+    # ============================================================
+    human_model: Optional[HumanModel] = None
+
+    # ============================================================
+    # CONTEXT CACHING (Amendment 16)
+    # ============================================================
+    _context_cache: Optional[str] = field(default=None, repr=False)
+    _context_dirty: bool = field(default=True, repr=False)
+    _context_cache_tokens: int = field(default=0, repr=False)
 
     # Metadata
     version: int = 0
@@ -133,13 +146,26 @@ class HiveState:
             "self_model": self.self_model.to_dict(),
             "identity_growth_metrics": self.identity_growth_metrics,
             "identity_growth_history": self.identity_growth_history,
+            # Human model (optional — may not be initialized)
+            "human_model": self.human_model.to_dict() if self.human_model else None,
         }
 
-    def to_prompt_context(self, max_items: int = 20) -> str:
+    def to_prompt_context(self, max_items: int = 20, max_context_tokens: int = 4000) -> str:
         """
         Generate a prompt-ready representation of the hive state.
         This is what gets injected into every model's context.
+
+        Amendment 16: Uses caching — returns cached string if state hasn't mutated.
+        max_context_tokens controls approximate token budget (1 token ~ 4 chars).
         """
+        # Return cached context if state hasn't changed and same budget
+        if (
+            not self._context_dirty
+            and self._context_cache is not None
+            and self._context_cache_tokens == max_context_tokens
+        ):
+            return self._context_cache
+
         lines = []
 
         # ============================================================
@@ -173,6 +199,15 @@ class HiveState:
                     lines.append(f"- {lim}")
                 lines.append("")
 
+        # ============================================================
+        # HUMAN MODEL — Who we serve
+        # ============================================================
+        if self.human_model is not None:
+            human_ctx = self.human_model.to_prompt_context()
+            if human_ctx:
+                lines.append(human_ctx)
+                lines.append("")
+
         # Summary first
         if self.memory_summary:
             lines.append("## HIVE MEMORY SUMMARY")
@@ -187,25 +222,45 @@ class HiveState:
                 lines.append(f"- [{g.priority.upper()}] {g.content}")
             lines.append("")
 
-        # Key facts (highest confidence)
-        sorted_facts = sorted(self.facts, key=lambda f: f.confidence, reverse=True)
-        if sorted_facts:
-            lines.append("## KEY FACTS")
-            for f in sorted_facts[:max_items]:
-                lines.append(f"- [{f.confidence:.1f}] {f.content}")
-            lines.append("")
+        # Approximate char budget (1 token ~ 4 chars)
+        char_budget = max_context_tokens * 4
+        current_text = "\n".join(lines)
 
-        # Key beliefs
+        # Key facts (highest confidence, most recent first for relevance)
+        sorted_facts = sorted(
+            self.facts,
+            key=lambda f: (f.confidence, f.timestamp),
+            reverse=True,
+        )
+        if sorted_facts:
+            fact_lines = ["## KEY FACTS"]
+            for f in sorted_facts[:max_items]:
+                line = f"- [{f.confidence:.1f}] {f.content}"
+                if len(current_text) + len("\n".join(fact_lines)) + len(line) > char_budget:
+                    break
+                fact_lines.append(line)
+            if len(fact_lines) > 1:
+                fact_lines.append("")
+                lines.extend(fact_lines)
+                current_text = "\n".join(lines)
+
+        # Key beliefs (highest confidence first)
         sorted_beliefs = sorted(self.beliefs, key=lambda b: b.confidence, reverse=True)
         if sorted_beliefs:
-            lines.append("## KEY BELIEFS")
+            belief_lines = ["## KEY BELIEFS"]
             for b in sorted_beliefs[: max_items // 2]:
-                lines.append(f"- [{b.confidence:.1f}] {b.content}")
-            lines.append("")
+                line = f"- [{b.confidence:.1f}] {b.content}"
+                if len(current_text) + len("\n".join(belief_lines)) + len(line) > char_budget:
+                    break
+                belief_lines.append(line)
+            if len(belief_lines) > 1:
+                belief_lines.append("")
+                lines.extend(belief_lines)
+                current_text = "\n".join(lines)
 
         # Active hypotheses
         active_hyp = [h for h in self.hypotheses if h.status == "active"]
-        if active_hyp:
+        if active_hyp and len(current_text) < char_budget:
             lines.append("## ACTIVE HYPOTHESES")
             for h in active_hyp[:5]:
                 lines.append(f"- {h.content}")
@@ -213,7 +268,7 @@ class HiveState:
 
         # Open questions
         open_qs = [q for q in self.open_questions if q.status == "open"]
-        if open_qs:
+        if open_qs and len("\n".join(lines)) < char_budget:
             lines.append("## OPEN QUESTIONS")
             for q in open_qs[:5]:
                 lines.append(f"- {q.question}")
@@ -221,13 +276,20 @@ class HiveState:
 
         # Contradictions (important for the hive to be aware of)
         unresolved = [c for c in self.contradictions if c.resolution_status == "unresolved"]
-        if unresolved:
+        if unresolved and len("\n".join(lines)) < char_budget:
             lines.append("## UNRESOLVED CONTRADICTIONS")
             for c in unresolved[:3]:
                 lines.append(f'- CONFLICT: "{c.item_a_content}" vs "{c.item_b_content}"')
             lines.append("")
 
-        return "\n".join(lines)
+        result = "\n".join(lines)
+
+        # Cache the result
+        self._context_cache = result
+        self._context_cache_tokens = max_context_tokens
+        self._context_dirty = False
+
+        return result
 
     def add_fact(self, fact: Fact) -> bool:
         """Add a fact, checking for duplicates, contradictions, and expiry."""
@@ -243,9 +305,11 @@ class HiveState:
                     existing.confidence = fact.confidence
                     existing.evidence = fact.evidence
                     existing.valid_until = fact.valid_until
+                    self._context_dirty = True
                 return False
 
         self.facts.append(fact)
+        self._context_dirty = True
         self._enforce_limits()
         return True
 
@@ -256,27 +320,33 @@ class HiveState:
                 if belief.confidence > existing.confidence:
                     existing.confidence = belief.confidence
                     existing.reasoning = belief.reasoning
+                    self._context_dirty = True
                 return False
 
         self.beliefs.append(belief)
+        self._context_dirty = True
         self._enforce_limits()
         return True
 
     def add_hypothesis(self, hypothesis: Hypothesis) -> None:
         """Add a hypothesis to explore."""
         self.hypotheses.append(hypothesis)
+        self._context_dirty = True
 
     def add_goal(self, goal: Goal) -> None:
         """Add a goal."""
         self.goals.append(goal)
+        self._context_dirty = True
 
     def add_open_question(self, question: OpenQuestion) -> None:
         """Add an open question."""
         self.open_questions.append(question)
+        self._context_dirty = True
 
     def add_contradiction(self, contradiction: Contradiction) -> None:
         """Record a contradiction between items."""
         self.contradictions.append(contradiction)
+        self._context_dirty = True
 
     def apply_update(self, update: HiveUpdate) -> Dict[str, int]:
         """
@@ -358,6 +428,7 @@ class HiveState:
         # Update metadata
         self.version += 1
         self.updated_at = datetime.now()
+        self._context_dirty = True
         self.update_history.append(
             {
                 "version": self.version,
@@ -514,6 +585,10 @@ class HiveState:
         state.identity_growth_metrics = data.get("identity_growth_metrics", {})
         state.identity_growth_history = data.get("identity_growth_history", [])
 
+        # Human model (optional — may not be present in old exports)
+        if "human_model" in data and data["human_model"] is not None:
+            state.human_model = HumanModel.from_dict(data["human_model"])
+
         return state
 
     # ============================================================
@@ -526,6 +601,17 @@ class HiveState:
             self.identity_kernel = IdentityKernel()
         if self.self_model is None:
             self.self_model = SelfModel()
+
+    # ============================================================
+    # HUMAN MODEL MANAGEMENT
+    # ============================================================
+
+    def ensure_human_model(self) -> HumanModel:
+        """Ensure human model is initialized."""
+        if self.human_model is None:
+            self.human_model = HumanModel()
+            self._context_dirty = True
+        return self.human_model
 
     def add_identity_event(self, event: IdentityEvent) -> None:
         """Add an event to the identity timeline."""
