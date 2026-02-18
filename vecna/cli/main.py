@@ -1334,6 +1334,29 @@ def serve(host: str, port: int):
 
 
 # ============================================================
+# TUI COMMAND
+# ============================================================
+
+
+@cli.command()
+def tui():
+    """Launch the Vecna TUI (Textual terminal interface)."""
+    try:
+        from vecna.tui.app import TEXTUAL_AVAILABLE, VecnaTUI
+    except ImportError as e:
+        click.echo(f"TUI dependencies missing: {e}")
+        raise SystemExit(1)
+
+    if not TEXTUAL_AVAILABLE:
+        click.echo("Textual not installed. Install with: pip install textual trogon")
+        raise SystemExit(1)
+
+    app = VecnaTUI()
+    click.echo("Launching Vecna TUI...")
+    app.run()
+
+
+# ============================================================
 # HEARTBEAT COMMANDS
 # ============================================================
 
