@@ -14,6 +14,8 @@ Tests:
 import asyncio
 from datetime import datetime
 
+import pytest
+
 from vecna.channels.base import (
     BaseChannel,
     InboundMessage,
@@ -278,6 +280,24 @@ class TestChannelEdgeCases:
         """Sender field with special characters should be preserved."""
         msg = InboundMessage(channel="slack", sender="user@domain.com/+1-555-0100", content="hi")
         assert msg.sender == "user@domain.com/+1-555-0100"
+
+    async def test_cli_send_none_message_raises_type_error(self):
+        """Error path: CLIChannel.send rejects non-OutboundMessage payloads."""
+        from vecna.channels.cli_channel import CLIChannel
+
+        channel = CLIChannel()
+        with pytest.raises(TypeError, match="OutboundMessage"):
+            await channel.send(None)  # type: ignore[arg-type]
+
+    async def test_cli_send_non_string_content_raises_type_error(self):
+        """Error path: CLIChannel.send rejects non-string content."""
+        from vecna.channels.cli_channel import CLIChannel
+
+        channel = CLIChannel()
+        bad_message = OutboundMessage(channel="cli", recipient="user", content="ok")
+        bad_message.content = 123  # type: ignore[assignment]
+        with pytest.raises(TypeError, match="content must be a string"):
+            await channel.send(bad_message)
 
 
 class TestChannelConcurrency:

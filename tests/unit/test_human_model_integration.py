@@ -5,10 +5,6 @@ are extracted from task/response pairs, and interaction count is
 maintained across think() calls.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
 from vecna.adapters.base import BaseAdapter, ModelConfig, HIVE_IDENTITY_PROMPT
 from vecna.core.hive_state import HiveState
 from vecna.core.human_model import HumanModel, Preference

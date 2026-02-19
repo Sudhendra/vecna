@@ -153,6 +153,19 @@ def is_task_complete(
     4. Response contains action intent -> not complete (on early cycles)
     5. Substantive response without questions -> complete
     """
+    if not isinstance(response, str):
+        raise TypeError("response must be a string")
+    if not isinstance(task, str):
+        raise TypeError("task must be a string")
+    if not isinstance(cycle, int):
+        raise TypeError("cycle must be an int")
+    if not isinstance(max_cycles, int):
+        raise TypeError("max_cycles must be an int")
+    if cycle < 0:
+        raise ValueError("cycle must be non-negative")
+    if max_cycles <= 0:
+        raise ValueError("max_cycles must be positive")
+
     # Safety valve: max cycles
     if cycle >= max_cycles:
         return True
@@ -209,6 +222,11 @@ def _get_identity_event_type(event: object) -> str:
         return trigger
 
     return "unknown"
+
+
+def get_identity_event_type(event: object) -> str:
+    """Public wrapper for identity event type normalization."""
+    return _get_identity_event_type(event)
 
 
 async def run_session(
@@ -352,7 +370,7 @@ class HiveLoop:
 
                 self._state_manager = PgStateManager(auto_sync_memory=self.config.auto_sync_memory)
                 logger.info("Using PgStateManager for memory persistence")
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(
                     f"Failed to initialize PgStateManager: {e}, falling back to in-memory"
                 )
@@ -707,7 +725,14 @@ class HiveLoop:
                     ):
                         try:
                             self._state_manager.persist_identity_event(identity_event)
-                        except Exception as e:
+                        except (
+                            RuntimeError,
+                            ValueError,
+                            TypeError,
+                            KeyError,
+                            AttributeError,
+                            OSError,
+                        ) as e:
                             logger.warning(f"Failed to persist identity event: {e}")
 
                     # Combine responses — Primary Cortex hierarchy
@@ -752,7 +777,14 @@ class HiveLoop:
                                     )
                                     if tool_results and self.config.verbose:
                                         logger.info(f"Executed {len(tool_results)} tool call(s)")
-                            except Exception as e:
+                            except (
+                                RuntimeError,
+                                ValueError,
+                                TypeError,
+                                KeyError,
+                                AttributeError,
+                                OSError,
+                            ) as e:
                                 logger.warning(f"Tool execution failed: {e}")
 
                         # === CODE EXECUTION SPAN ===
@@ -783,7 +815,14 @@ class HiveLoop:
                                         logger.info(
                                             f"Executed {len(exec_results)} code block(s) in RLM sandbox"
                                         )
-                            except Exception as e:
+                            except (
+                                RuntimeError,
+                                ValueError,
+                                TypeError,
+                                KeyError,
+                                AttributeError,
+                                OSError,
+                            ) as e:
                                 logger.warning(f"Code execution failed: {e}")
 
                         if final_response:
@@ -846,7 +885,7 @@ class HiveLoop:
                     await self._session_manager.end_session(conversation_log)
                 return final_response
 
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 trace_ctx.set_level("ERROR")
                 trace_ctx.set_status_message(str(e))
                 raise
@@ -873,6 +912,14 @@ class HiveLoop:
         self._session_manager = SessionManager(
             mirror=mirror, flush_mgr=flush_mgr, config=vecna_config
         )
+
+    async def ensure_session_manager(self, initial_query: Optional[str] = None) -> None:
+        """Public wrapper that ensures a SessionManager exists."""
+        await self._ensure_session_manager(initial_query)
+
+    def get_session_manager(self) -> Optional[SessionManager]:
+        """Return the active SessionManager, if initialized."""
+        return self._session_manager
 
     def initialize_session_manager(self) -> None:
         if self._session_manager is None:
@@ -949,7 +996,7 @@ class HiveLoop:
                                 f"PgRLM: {rlm_stats['num_facets']} facets, "
                                 f"{rlm_stats['total_items_retrieved']} items retrieved"
                             )
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"PgMemoryStore retrieval failed: {e}")
 
         # Fall back to in-memory MemoryStore
@@ -1011,7 +1058,7 @@ class HiveLoop:
         async def run_model(adapter: BaseAdapter) -> tuple[str, HiveUpdate]:
             try:
                 return await adapter.think(self.state, task)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.error(f"Model {adapter.name} failed: {e}")
                 return "", HiveUpdate(source_model=adapter.name)
 
@@ -1032,7 +1079,7 @@ class HiveLoop:
         if self._state_manager:
             try:
                 self._state_manager.sync_memory_from_state(self.state)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"Failed to sync memory to PG: {e}")
         elif self.memory:
             self.memory.add_from_state(self.state)
@@ -1174,7 +1221,7 @@ class HiveLoop:
         if self._state_manager:
             try:
                 self._state_manager.flush_offline_spool()
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError):
                 pass
 
     def _is_task_complete(self, response: str, task: str, cycle: int, max_cycles: int) -> bool:
@@ -1229,7 +1276,14 @@ class HiveLoop:
             if identity_event and self.config.persist_identity_events and self._state_manager:
                 try:
                     self._state_manager.persist_identity_event(identity_event)
-                except Exception as e:
+                except (
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                ) as e:
                     logger.warning(f"Failed to persist identity event: {e}")
 
             if self.cycle_count % self.config.compress_every == 0:
@@ -1248,14 +1302,28 @@ class HiveLoop:
                     response, _ = await self.tool_runtime.execute_calls(
                         response, self._build_tool_execution_context(session_id=None)
                     )
-                except Exception as e:
+                except (
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                ) as e:
                     logger.warning(f"Tool execution failed: {e}")
 
             # Execute any Python code blocks in the response via RLM sandbox
             if response and self.config.auto_execute_code:
                 try:
                     response, _ = await execute_and_inject(response)
-                except Exception as e:
+                except (
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                ) as e:
                     logger.warning(f"Code execution failed: {e}")
 
             if callback:
@@ -1290,7 +1358,7 @@ class HiveLoop:
             try:
                 self._state_manager.save_state(self.state)
                 logger.info("State saved to PostgreSQL")
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"PostgreSQL save failed: {e}")
                 # Fall back to file if PG fails and filepath given
                 if filepath:
@@ -1330,7 +1398,7 @@ class HiveLoop:
                     logger.info("State loaded from PostgreSQL")
                 else:
                     logger.info("No existing state in PostgreSQL, using fresh state")
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"PostgreSQL load failed: {e}")
         else:
             logger.warning("No filepath provided and PgStateManager not available")

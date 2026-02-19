@@ -196,3 +196,7 @@ class HeartbeatRunner:
             logger.debug("Thoughtfulness heartbeat completed")
         except (KeyError, ValueError, TypeError, AttributeError) as exc:
             logger.warning("Thoughtfulness heartbeat failed: %s", exc)
+
+
+class HeartbeatManager(HeartbeatRunner):
+    """Backward-compatible alias for HeartbeatRunner."""

@@ -5,7 +5,7 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 from vecna.memory.dream_loop import DreamLoop, DreamResult
-from vecna.orchestrator.curiosity import CuriosityEngine, CuriosityGoal
+from vecna.orchestrator.curiosity import CuriosityEngine
 from vecna.orchestrator.pg_goal_queue import PgGoalQueue
 
 

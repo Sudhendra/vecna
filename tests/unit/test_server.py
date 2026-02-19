@@ -174,6 +174,28 @@ class TestStateEndpoint:
         assert data1["updated_at"] == data2["updated_at"]
 
 
+class TestChannelsEndpoint:
+    """Tests for GET /api/channels."""
+
+    async def test_channels_returns_empty_when_router_missing(self, aiohttp_client):
+        app = create_app()
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/channels")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["channels"] == []
+        assert data["count"] == 0
+
+    async def test_channels_returns_router_channels(self, aiohttp_client):
+        app = create_app(adapters=[])
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/channels")
+        assert resp.status == 200
+        data = await resp.json()
+        assert "http" in data["channels"]
+        assert "websocket" in data["channels"]
+
+
 class TestWebhookEndpoint:
     """Tests for POST /api/webhooks/ingest."""
 
@@ -240,6 +262,30 @@ class TestWebSocketAuth:
                 web.WSMsgType.ERROR,
                 web.WSMsgType.CLOSING,
             )
+
+
+class TestApiKeyAuthMiddleware:
+    """Tests for X-API-Key authentication middleware."""
+
+    async def test_chat_rejects_missing_api_key(self, aiohttp_client):
+        app = create_app(api_key="test-secret")
+        client = await aiohttp_client(app)
+        resp = await client.post("/api/chat", json={"message": "hello"})
+        assert resp.status == 401
+        data = await resp.json()
+        assert data["error"] == "Unauthorized"
+
+    async def test_chat_accepts_valid_api_key(self, aiohttp_client):
+        app = create_app(api_key="test-secret")
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/api/chat",
+            json={"message": "hello"},
+            headers={"X-API-Key": "test-secret"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["session_id"] == "default"
 
 
 class TestRouteRegistration:

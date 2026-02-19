@@ -1,5 +1,7 @@
 """Tests for task completion detection."""
 
+import pytest
+
 
 class TestTaskCompletion:
     def test_direct_answer_is_complete(self):
@@ -109,3 +111,17 @@ class TestTaskCompletionEdgeCases:
         response = "Could you clarify what you mean?"
         task = "Something"
         assert is_task_complete(response, task, cycle=1, max_cycles=1)
+
+    def test_invalid_response_type_raises_type_error(self):
+        """Error path: response must be a string."""
+        from vecna.orchestrator.loop import is_task_complete
+
+        with pytest.raises(TypeError, match="response must be a string"):
+            is_task_complete(None, "task", cycle=1, max_cycles=10)  # type: ignore[arg-type]
+
+    def test_non_positive_max_cycles_raises_value_error(self):
+        """Error path: max_cycles must be positive."""
+        from vecna.orchestrator.loop import is_task_complete
+
+        with pytest.raises(ValueError, match="max_cycles must be positive"):
+            is_task_complete("ok", "task", cycle=0, max_cycles=0)

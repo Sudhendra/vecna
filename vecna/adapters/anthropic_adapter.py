@@ -11,7 +11,7 @@ import os
 from typing import Any, AsyncIterator, Dict, List
 
 from vecna.adapters.base import BaseAdapter, ModelConfig
-from vecna.core.types import HiveUpdate
+from vecna.adapters.tool_calling import parse_tool_call_update
 
 logger = logging.getLogger("vecna.anthropic_adapter")
 
@@ -134,6 +134,8 @@ class AnthropicAdapter(BaseAdapter):
         # Check for tool_use blocks — return hive_update input as JSON
         for block in response.content:
             if block.type == "tool_use" and block.name == "hive_update":
+                if isinstance(block.input, dict):
+                    parse_tool_call_update(block.input, source_model=self.config.name)
                 return json.dumps(block.input)
 
         # Concatenate text blocks
@@ -176,24 +178,3 @@ class AnthropicAdapter(BaseAdapter):
         except anthropic.APIError as e:
             logger.error("Anthropic streaming failed: %s", e)
             raise
-
-    def parse_update(self, output: str) -> HiveUpdate:
-        """Parse tool use JSON into HiveUpdate.
-
-        Amendment 5: Uses shared parse_tool_call_update() from
-        tool_calling.py instead of duplicating parsing logic.
-
-        Falls back to BaseAdapter YAML parsing if JSON fails
-        (e.g., when model returns plain text with <HIVE_UPDATE>).
-        """
-        try:
-            args = json.loads(output)
-            if isinstance(args, dict):
-                from vecna.adapters.tool_calling import parse_tool_call_update
-
-                return parse_tool_call_update(args, source_model=self.config.name)
-        except (json.JSONDecodeError, ValueError):
-            logger.debug("Anthropic output not valid JSON, falling back to YAML parse")
-
-        # Fall back to base YAML parsing for non-JSON output
-        return super().parse_update(output)

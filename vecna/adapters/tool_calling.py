@@ -13,7 +13,8 @@ MUST import and use these functions — no duplicate parse_update() methods.
 """
 
 import logging
-from typing import Any, Dict, List
+import math
+from typing import Any, Dict, List, Optional
 
 from vecna.core.types import HiveUpdate
 
@@ -153,7 +154,7 @@ def _coerce_list(value: Any) -> List[Dict[str, Any]]:
     return value
 
 
-def _clamp_confidence(value: Any) -> float:
+def _clamp_confidence(value: Any) -> Optional[float]:
     """
     Convert and clamp a confidence value to [0.0, 1.0].
 
@@ -163,6 +164,8 @@ def _clamp_confidence(value: Any) -> float:
     try:
         numeric = float(value)
     except (ValueError, TypeError):
+        return None
+    if not math.isfinite(numeric):
         return None
     return max(0.0, min(1.0, numeric))
 
@@ -185,6 +188,11 @@ def parse_tool_call_update(
     Returns:
         A populated HiveUpdate instance.
     """
+    if not isinstance(args, dict):
+        raise TypeError("args must be a dict")
+    if not isinstance(source_model, str) or not source_model.strip():
+        raise ValueError("source_model must be a non-empty string")
+
     update = HiveUpdate(source_model=source_model)
 
     update.new_facts = _coerce_list(args.get("new_facts"))

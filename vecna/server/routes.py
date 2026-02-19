@@ -19,7 +19,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from aiohttp import web
 
@@ -29,13 +29,39 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vecna.server")
 
 
+class _NoopChannel:
+    """Minimal channel for HTTP/WebSocket router registration."""
+
+    async def send(self, _message: str) -> None:
+        return None
+
+
+def _get_message_router(request: web.Request) -> Optional[Any]:
+    """Get app router, creating one from HiveLoop when available."""
+    router = request.app.get("message_router")
+    if router is not None:
+        return router
+
+    hive_loop = request.app.get("hive_loop")
+    if hive_loop is None:
+        return None
+
+    from vecna.channels.router import MessageRouter
+
+    router = MessageRouter(hive_loop=hive_loop)
+    router.register_channel("http", _NoopChannel())
+    router.register_channel("websocket", _NoopChannel())
+    request.app["message_router"] = router
+    return router
+
+
 async def health(request: web.Request) -> web.Response:
     """Health check endpoint.
 
     Returns server status, version, and current timestamp.
     When a HiveLoop is wired, also returns state_version and adapter_count.
     """
-    data = {
+    data: Dict[str, Any] = {
         "status": "ok",
         "version": "0.1.0",
         "timestamp": datetime.now().isoformat(),
@@ -71,10 +97,15 @@ async def chat(request: web.Request) -> web.Response:
     if not message or not message.strip():
         return web.json_response({"error": "Message required"}, status=400)
 
-    # Priority 1: MessageRouter (Amendment 3)
-    router = request.app.get("message_router")
+    # Amendment 3: MessageRouter is the single inbound entry point.
+    router = _get_message_router(request)
     if router is not None:
-        from vecna.channels.router import InboundMessage, RateLimitError, RoutingError
+        from vecna.channels.router import (
+            InboundMessage,
+            RateLimitError,
+            RoutingError,
+            UnknownChannelError,
+        )
 
         try:
             inbound = InboundMessage(
@@ -83,14 +114,22 @@ async def chat(request: web.Request) -> web.Response:
                 session_id=session_id,
             )
             outbound = await router.route_inbound(inbound)
-            return web.json_response(
-                {
-                    "response": outbound.content,
-                    "session_id": session_id,
-                    "format_type": outbound.format_type,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
+            state_version = None
+            hive_loop = request.app.get("hive_loop")
+            if hive_loop is not None:
+                state_version = hive_loop.state.version
+
+            response_body: Dict[str, Any] = {
+                "response": outbound.content,
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat(),
+            }
+            if hasattr(outbound, "format_type"):
+                response_body["format_type"] = outbound.format_type
+            if state_version is not None:
+                response_body["state_version"] = state_version
+
+            return web.json_response(response_body)
         except asyncio.TimeoutError:
             logger.warning("Chat request timed out for session %s", session_id)
             return web.json_response({"error": "Request timed out"}, status=504)
@@ -100,36 +139,14 @@ async def chat(request: web.Request) -> web.Response:
         except RoutingError as exc:
             logger.error("Routing error for session %s: %s", session_id, exc)
             return web.json_response({"error": "Internal routing error"}, status=500)
+        except UnknownChannelError as exc:
+            logger.error("Channel registration error for session %s: %s", session_id, exc)
+            return web.json_response({"error": "Internal routing error"}, status=500)
         except ValueError as exc:
             logger.warning("Invalid chat request: %s", exc)
             return web.json_response({"error": str(exc)}, status=400)
 
-    # Priority 2: HiveLoop.think() (Task 26)
-    hive_loop = request.app.get("hive_loop")
-    if hive_loop is not None:
-        try:
-            response_text = await hive_loop.think(message)
-        except ValueError as exc:
-            # HiveLoop raises ValueError when no adapters are configured
-            logger.error("HiveLoop.think failed (ValueError): %s", exc)
-            return web.json_response({"error": "Internal processing error"}, status=500)
-        except asyncio.TimeoutError:
-            logger.warning("HiveLoop.think timed out for session %s", session_id)
-            return web.json_response({"error": "Request timed out"}, status=504)
-        except RuntimeError as exc:
-            logger.error("HiveLoop.think runtime error: %s", exc)
-            return web.json_response({"error": "Internal processing error"}, status=500)
-
-        return web.json_response(
-            {
-                "response": response_text,
-                "state_version": hive_loop.state.version,
-                "session_id": session_id,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-
-    # Priority 3: Placeholder response when nothing is wired
+    # Placeholder response when no HiveLoop/router is wired.
     return web.json_response(
         {
             "response": f"[Vecna server placeholder] Received: {message}",
@@ -160,6 +177,20 @@ async def get_state(request: web.Request) -> web.Response:
         request.app["hive_state"] = state
 
     return web.json_response(state.to_summary_dict())
+
+
+async def get_channels(request: web.Request) -> web.Response:
+    """List active channels registered in MessageRouter."""
+    router = _get_message_router(request)
+    if router is None:
+        return web.json_response({"channels": [], "count": 0})
+
+    if not hasattr(router, "list_channels"):
+        logger.error("Configured message_router does not provide list_channels()")
+        return web.json_response({"error": "Router not introspectable"}, status=500)
+
+    channels = router.list_channels()
+    return web.json_response({"channels": channels, "count": len(channels)})
 
 
 async def webhook_ingest(request: web.Request) -> web.Response:
@@ -214,8 +245,7 @@ async def ws_stream(request: web.Request) -> web.WebSocketResponse:
     # For now, accept any non-empty token
     logger.info("WebSocket connection established")
 
-    hive_loop = request.app.get("hive_loop")
-    ws_router = request.app.get("message_router")
+    ws_router = _get_message_router(request)
 
     try:
         async for msg in ws:
@@ -232,7 +262,7 @@ async def ws_stream(request: web.Request) -> web.WebSocketResponse:
                     await ws.send_json({"error": "message field required"})
                     continue
 
-                # Priority 1: MessageRouter (Amendment 3)
+                # Amendment 3: MessageRouter is the single inbound entry point.
                 if ws_router is not None:
                     from vecna.channels.router import InboundMessage
 
@@ -257,22 +287,7 @@ async def ws_stream(request: web.Request) -> web.WebSocketResponse:
                             }
                         )
 
-                # Priority 2: HiveLoop (Task 26)
-                elif hive_loop is not None:
-                    try:
-                        response = await hive_loop.think(message)
-                        await ws.send_json({"response": response})
-                    except ValueError as exc:
-                        logger.error("WebSocket HiveLoop error: %s", exc)
-                        await ws.send_json({"error": "Processing failed"})
-                    except asyncio.TimeoutError:
-                        logger.warning("WebSocket HiveLoop.think timed out")
-                        await ws.send_json({"error": "Request timed out"})
-                    except RuntimeError as exc:
-                        logger.error("WebSocket runtime error: %s", exc)
-                        await ws.send_json({"error": "Processing failed"})
-
-                # Priority 3: Echo fallback
+                # Echo fallback when no HiveLoop/router is wired.
                 else:
                     await ws.send_str(
                         json.dumps(
@@ -325,6 +340,7 @@ def setup_routes(app: web.Application) -> None:
     """Register all API routes on the application."""
     app.router.add_get("/api/health", health)
     app.router.add_post("/api/chat", chat)
+    app.router.add_get("/api/channels", get_channels)
     app.router.add_get("/api/state", get_state)
     app.router.add_get("/api/metrics", metrics)
     app.router.add_post("/api/webhooks/ingest", webhook_ingest)

@@ -227,7 +227,7 @@ class MessageRouter:
         # Call HiveLoop outside the lock to avoid blocking
         try:
             response_text = await self._hive_loop.think(message.content)
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             raise RoutingError(str(exc)) from exc
 
         # Record assistant response in session

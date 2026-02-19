@@ -250,3 +250,29 @@ class TestParseToolCallEdgeCases:
         )
         assert type(update) is HiveUpdate
         assert update.source_model == "type-check"
+
+    def test_parse_non_dict_args_raises_type_error(self):
+        """Error path: args must be a dict."""
+        import pytest
+
+        with pytest.raises(TypeError, match="args must be a dict"):
+            parse_tool_call_update(["not", "a", "dict"], source_model="model")  # type: ignore[arg-type]
+
+    def test_parse_empty_source_model_raises_value_error(self):
+        """Error path: source_model must be non-empty."""
+        import pytest
+
+        with pytest.raises(ValueError, match="source_model must be a non-empty string"):
+            parse_tool_call_update({}, source_model="")
+
+    def test_parse_nan_confidence_keeps_default(self):
+        """NaN confidence should be treated as invalid and keep default."""
+        update = parse_tool_call_update({"overall_confidence": "nan"}, source_model="nan-model")
+        assert update.confidence == 0.5
+
+    def test_parse_infinite_confidence_keeps_default(self):
+        """Infinite confidence should be treated as invalid and keep default."""
+        update = parse_tool_call_update(
+            {"overall_confidence": float("inf")}, source_model="inf-model"
+        )
+        assert update.confidence == 0.5

@@ -468,3 +468,7 @@ class MetricsCollector:
         self.human_model = HumanModelMetrics()
         self.sessions.clear()
         logger.info("Metrics collector reset")
+
+
+class Dashboard(MetricsCollector):
+    """Backward-compatible alias for MetricsCollector."""

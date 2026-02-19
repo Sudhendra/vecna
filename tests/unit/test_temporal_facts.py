@@ -13,6 +13,8 @@ Tests:
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from vecna.core.types import Fact, Belief, SerializableMixin
 
 
@@ -299,6 +301,26 @@ class TestTemporalEdgeCases:
         for source_type in ["stated", "observation", "inference", "user_provided"]:
             fact = Fact(content=f"Type: {source_type}", source_type=source_type)
             assert fact.source_type == source_type
+
+    def test_fact_from_dict_invalid_timestamp_raises_value_error(self):
+        """Invalid ISO timestamp should raise ValueError in from_dict."""
+        with pytest.raises(ValueError, match="Invalid isoformat string"):
+            Fact.from_dict(
+                {
+                    "content": "broken",
+                    "timestamp": "not-a-timestamp",
+                }
+            )
+
+    def test_fact_from_dict_invalid_valid_until_raises_value_error(self):
+        """Invalid ISO valid_until should raise ValueError in from_dict."""
+        with pytest.raises(ValueError, match="Invalid isoformat string"):
+            Fact.from_dict(
+                {
+                    "content": "broken-valid-until",
+                    "valid_until": "tomorrowish",
+                }
+            )
 
 
 class TestSerializableMixin:

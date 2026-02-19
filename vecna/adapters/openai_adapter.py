@@ -11,7 +11,7 @@ import os
 from typing import Any, AsyncIterator, Dict, List
 
 from vecna.adapters.base import BaseAdapter, ModelConfig
-from vecna.core.types import HiveUpdate
+from vecna.adapters.tool_calling import parse_tool_call_update
 
 logger = logging.getLogger("vecna.openai_adapter")
 
@@ -145,6 +145,12 @@ class OpenAIAdapter(BaseAdapter):
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
                 if tc.function.name == "hive_update":
+                    try:
+                        args = json.loads(tc.function.arguments)
+                        if isinstance(args, dict):
+                            parse_tool_call_update(args, source_model=self.config.name)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        logger.debug("OpenAI hive_update arguments were not valid JSON")
                     return tc.function.arguments
             # Non-hive_update tool calls: return text content
             return choice.message.content or ""
@@ -185,24 +191,3 @@ class OpenAIAdapter(BaseAdapter):
         except openai.APIError as e:
             logger.error("OpenAI streaming failed: %s", e)
             raise
-
-    def parse_update(self, output: str) -> HiveUpdate:
-        """Parse tool call JSON into HiveUpdate.
-
-        Amendment 5: Uses shared parse_tool_call_update() from
-        tool_calling.py instead of duplicating parsing logic.
-
-        Falls back to BaseAdapter YAML parsing if JSON fails
-        (e.g., when model returns plain text with <HIVE_UPDATE>).
-        """
-        try:
-            args = json.loads(output)
-            if isinstance(args, dict):
-                from vecna.adapters.tool_calling import parse_tool_call_update
-
-                return parse_tool_call_update(args, source_model=self.config.name)
-        except (json.JSONDecodeError, ValueError):
-            logger.debug("OpenAI output not valid JSON, falling back to YAML parse")
-
-        # Fall back to base YAML parsing for non-JSON output
-        return super().parse_update(output)

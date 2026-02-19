@@ -21,7 +21,7 @@ Amendments applied:
 
 import asyncio
 from datetime import datetime
-from typing import Any, List
+from typing import Any, List, cast
 
 import pytest
 
@@ -245,8 +245,7 @@ class TestMessageRouterRouting:
         # Amendment 9: Assert specific response content
         assert response.content == "Hello user"
         # Amendment 11: Use public accessor
-        session = router.get_session("sess-new")
-        assert session is not None
+        session = cast(Any, router.get_session("sess-new"))
         assert session.session_id == "sess-new"
 
     async def test_route_inbound_returns_hive_loop_response(self):
@@ -289,7 +288,7 @@ class TestMessageRouterRouting:
         )
         await router.route_inbound(msg)
         # Amendment 11: Use public accessor
-        session = router.get_session("sess-hist")
+        session = cast(Any, router.get_session("sess-hist"))
         assert session.history[0] == {"role": "user", "content": "First message"}
         assert session.history[1] == {"role": "assistant", "content": "Reply"}
 
@@ -305,7 +304,7 @@ class TestMessageRouterRouting:
                 session_id="sess-multi",
             )
             await router.route_inbound(msg)
-        session = router.get_session("sess-multi")
+        session = cast(Any, router.get_session("sess-multi"))
         # 3 user + 3 assistant = 6 history entries
         assert len(session.history) == 6
         assert session.history[0] == {"role": "user", "content": "Message 0"}
@@ -624,8 +623,7 @@ class TestMessageRouterConcurrency:
 
         # Each session should have exactly 2 history entries (user + assistant)
         for i in range(50):
-            session = router.get_session(f"sess-{i}")
-            assert session is not None
+            session = cast(Any, router.get_session(f"sess-{i}"))
             assert len(session.history) == 2
             assert session.history[0]["role"] == "user"
             assert session.history[0]["content"] == f"Message {i}"
@@ -648,7 +646,7 @@ class TestMessageRouterConcurrency:
         results = await asyncio.gather(*[send_message(i) for i in range(50)])
 
         assert len(results) == 50
-        session = router.get_session("shared-sess")
+        session = cast(Any, router.get_session("shared-sess"))
         # 50 user + 50 assistant = 100 history entries
         assert len(session.history) == 100
 

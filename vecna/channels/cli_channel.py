@@ -25,6 +25,11 @@ class CLIChannel(BaseChannel):
 
     async def send(self, message: OutboundMessage) -> bool:
         """Print to console via Rich."""
+        if not isinstance(message, OutboundMessage):
+            raise TypeError("message must be an OutboundMessage")
+        if not isinstance(message.content, str):
+            raise TypeError("message.content must be a string")
+
         # TODO: Wire to existing Rich console in cli/main.py
         print(message.content)
         return True
