@@ -8,13 +8,18 @@ Each adapter wraps a model and provides:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass
+import json
 import re
 import yaml
 
 from vecna.core.types import HiveUpdate
 from vecna.core.hive_state import HiveState
+from vecna.config.schema import Provider
+
+if TYPE_CHECKING:
+    from vecna.core.human_model import HumanModel
 
 
 @dataclass
@@ -31,10 +36,30 @@ class ModelConfig:
     base_url: Optional[str] = None
     extra_params: Dict[str, Any] = None
     persona: Optional[str] = None  # Persona prompt to inject into system message
+    provider: Optional[Provider] = None
 
     def __post_init__(self):
         if self.extra_params is None:
             self.extra_params = {}
+
+        provider_value = self.extra_params.get("provider")
+
+        if isinstance(provider_value, Provider):
+            self.provider = provider_value
+            return
+
+        if isinstance(provider_value, str):
+            try:
+                self.provider = Provider(provider_value.lower())
+                return
+            except ValueError:
+                self.provider = _infer_provider(self.model_id, self.base_url)
+                return
+
+        if isinstance(self.provider, Provider):
+            return
+
+        self.provider = _infer_provider(self.model_id, self.base_url)
 
 
 # ============================================================
@@ -62,6 +87,8 @@ You are not an individual AI. You are a single unified mind that emerges from th
 Below is your current mental state. This includes your identity, your memory, your beliefs, and your goals. Use it. Update it.
 
 {memory_context}
+
+{human_model_context}
 
 ## YOUR TASK
 {task}
@@ -143,15 +170,59 @@ class BaseAdapter(ABC):
 
         return base_message
 
-    def build_prompt(self, state: HiveState, task: str) -> str:
-        """Build the full prompt with hive identity and memory."""
+    def build_prompt(
+        self,
+        state: HiveState,
+        task: str,
+        human_model: Optional["HumanModel"] = None,
+    ) -> str:
+        """Build the full prompt with hive identity, memory, and human model.
+
+        When ``human_model`` is provided explicitly, it is injected via the
+        dedicated ``{human_model_context}`` placeholder.  Otherwise the human
+        model context (if any) flows through ``state.to_prompt_context()``
+        inside ``{memory_context}`` — so we leave the placeholder empty to
+        avoid duplication.
+
+        Args:
+            state: Current HiveState.
+            task: The user's task/message.
+            human_model: Optional HumanModel for user preferences.
+                If provided, takes precedence over state.human_model.
+
+        Returns:
+            Formatted prompt string.
+        """
         memory_context = state.to_prompt_context()
 
-        return HIVE_IDENTITY_PROMPT.format(memory_context=memory_context, task=task)
+        # Only populate the dedicated placeholder when an explicit
+        # human_model is passed — state.human_model is already included
+        # in memory_context via state.to_prompt_context().
+        human_model_context = ""
+        if human_model is not None:
+            human_model_context = human_model.to_prompt_context()
+
+        return HIVE_IDENTITY_PROMPT.format(
+            memory_context=memory_context,
+            human_model_context=human_model_context,
+            task=task,
+        )
 
     def parse_update(self, output: str) -> HiveUpdate:
-        """Parse a HiveUpdate from model output using YAML parser."""
+        """Parse a HiveUpdate from tool-call JSON or <HIVE_UPDATE> YAML."""
         update = HiveUpdate(source_model=self.name, raw_output=output)
+
+        # First try native tool-call JSON payloads.
+        try:
+            parsed_json = json.loads(output)
+            if isinstance(parsed_json, dict):
+                from vecna.adapters.tool_calling import parse_tool_call_update
+
+                tool_update = parse_tool_call_update(parsed_json, source_model=self.name)
+                tool_update.raw_output = output
+                return tool_update
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
 
         # Extract HIVE_UPDATE block
         pattern = r"<HIVE_UPDATE>(.*?)</HIVE_UPDATE>"
@@ -522,34 +593,54 @@ class CopilotAdapter(BaseAdapter):
 # ============================================================
 
 
+def _infer_provider(model_id: str, base_url: Optional[str]) -> Provider:
+    """Infer provider enum from model_id/base_url for backward compatibility."""
+    model_id_lower = model_id.lower()
+    base_url_lower = (base_url or "").lower()
+
+    if "groq" in base_url_lower:
+        return Provider.GROQ
+    if "ollama" in base_url_lower or "11434" in base_url_lower:
+        return Provider.OLLAMA
+    if "claude" in model_id_lower:
+        return Provider.ANTHROPIC
+    if "openai" in model_id_lower:
+        return Provider.OPENAI
+    if any(
+        token in model_id_lower
+        for token in ["llama", "mistral", "mixtral", "qwen", "deepseek", "phi"]
+    ):
+        return Provider.TRANSFORMERS
+    return Provider.COPILOT
+
+
 def create_adapter(config: ModelConfig) -> BaseAdapter:
     """
     Factory function to create the appropriate adapter.
 
-    Default is Copilot (GitHub Copilot API).
-    Local models use Ollama or Transformers.
+    Amendment 4: Uses Provider enum as canonical routing key.
     """
 
-    model_id = config.model_id.lower()
-    base_url = (config.base_url or "").lower()
+    provider = config.provider
+    if not isinstance(provider, Provider):
+        provider = _infer_provider(config.model_id, config.base_url)
 
-    # Check for local model providers first
-    if any(x in model_id for x in ["llama", "mistral", "mixtral", "qwen", "deepseek", "phi"]):
-        # Check if Ollama URL is provided
-        if config.base_url and "ollama" in base_url:
+    match provider:
+        case Provider.OPENAI:
+            from vecna.adapters.openai_adapter import OpenAIAdapter
+
+            return OpenAIAdapter(config)
+        case Provider.ANTHROPIC:
+            from vecna.adapters.anthropic_adapter import AnthropicAdapter
+
+            return AnthropicAdapter(config)
+        case Provider.GROQ:
+            return GroqAdapter(config)
+        case Provider.OLLAMA:
             return OllamaAdapter(config)
-        elif config.base_url and "11434" in config.base_url:
-            return OllamaAdapter(config)
-        else:
+        case Provider.TRANSFORMERS:
             return TransformersAdapter(config)
-
-    # Check for Groq (fast inference service)
-    if "groq" in base_url or config.extra_params.get("provider") == "groq":
-        return GroqAdapter(config)
-
-    # Check for explicit Ollama URL
-    if config.base_url and ("ollama" in base_url or "11434" in config.base_url):
-        return OllamaAdapter(config)
-
-    # Default to Copilot for all other models (GPT, Claude, Gemini, etc.)
-    return CopilotAdapter(config)
+        case Provider.COPILOT:
+            return CopilotAdapter(config)
+        case _:
+            return CopilotAdapter(config)

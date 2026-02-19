@@ -84,3 +84,19 @@ def test_tool_allowed_fs_roots_round_trip_uses_normalized_values():
 
     assert serialized["tool_allowed_fs_roots"] == ["/tmp", "/work"]
     assert round_tripped.tool_allowed_fs_roots == ["/tmp", "/work"]
+
+
+def test_primary_model_defaults_to_none():
+    cfg = create_default_config()
+
+    assert cfg.primary_model is None
+
+
+def test_primary_model_round_trip():
+    cfg = VecnaConfig(primary_model="gpt-4.1")
+
+    serialized = cfg.to_dict()
+    round_tripped = VecnaConfig.from_dict(serialized)
+
+    assert serialized["primary_model"] == "gpt-4.1"
+    assert round_tripped.primary_model == "gpt-4.1"

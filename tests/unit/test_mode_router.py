@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any, cast
 
 import pytest
 
@@ -62,13 +63,13 @@ class LegacyIdentityEvent:
 def test_get_identity_event_type_prefers_event_type_alias():
     event = IdentityEvent(trigger="periodic")
 
-    assert loop_module._get_identity_event_type(event) == "periodic"
+    assert loop_module.get_identity_event_type(event) == "periodic"
 
 
 def test_get_identity_event_type_falls_back_to_trigger_for_legacy_events():
     event = LegacyIdentityEvent(trigger="periodic")
 
-    assert loop_module._get_identity_event_type(event) == "periodic"
+    assert loop_module.get_identity_event_type(event) == "periodic"
 
 
 def test_ensure_session_manager_uses_configured_workspace_dir(monkeypatch, tmp_path):
@@ -87,8 +88,8 @@ def test_ensure_session_manager_uses_configured_workspace_dir(monkeypatch, tmp_p
     monkeypatch.setattr("vecna.memory.workspace.init_workspace", fake_init_workspace)
 
     loop = HiveLoop(HiveConfig(use_pg_memory=False))
-    asyncio.run(loop._ensure_session_manager())
+    asyncio.run(loop.ensure_session_manager())
 
     assert called["path"] == tmp_path / "vecna-workspace"
-    assert loop._session_manager is not None
-    assert loop._session_manager.mirror.workspace_dir == tmp_path / "vecna-workspace"
+    session_manager = cast(Any, loop.get_session_manager())
+    assert session_manager.mirror.workspace_dir == tmp_path / "vecna-workspace"

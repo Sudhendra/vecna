@@ -14,13 +14,14 @@ The result: a single unified mind emerging from many.
 import asyncio
 from typing import List, Dict, Optional, Callable, Union
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 import os
 
 from vecna.config.schema import AgentMode
 from vecna.core.hive_state import HiveState
+from vecna.core.human_model import HumanModel, Preference
 from vecna.core.types import HiveUpdate, Goal
 from vecna.adapters.base import BaseAdapter, ModelConfig, create_adapter
 from vecna.memory.store import MemoryStore, MemoryCompressor
@@ -42,6 +43,174 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vecna.hive")
 
 
+# ============================================================
+# CIRCUIT BREAKER — Per-adapter fault isolation (Amendment 13)
+# ============================================================
+
+
+@dataclass
+class CircuitBreaker:
+    """
+    Per-adapter circuit breaker with exponential backoff.
+
+    After ``max_failures`` consecutive failures the breaker *opens* and the
+    adapter is skipped for an exponentially increasing cooldown period
+    (base_cooldown * 2^(failures - max_failures), capped at max_cooldown).
+
+    A single success resets the breaker to closed state.
+    """
+
+    adapter_name: str
+    failure_count: int = 0
+    max_failures: int = 3
+    cooldown_until: Optional[datetime] = None
+    base_cooldown: float = 30.0  # seconds
+    max_cooldown: float = 300.0  # seconds
+
+    def record_failure(self) -> None:
+        """Record a failed call. Opens the breaker after max_failures."""
+        self.failure_count += 1
+        if self.failure_count >= self.max_failures:
+            cooldown = min(
+                self.base_cooldown * (2 ** (self.failure_count - self.max_failures)),
+                self.max_cooldown,
+            )
+            self.cooldown_until = datetime.now() + timedelta(seconds=cooldown)
+            logger.warning(
+                "Circuit breaker OPEN for %s — skipping for %.0fs",
+                self.adapter_name,
+                cooldown,
+            )
+
+    def record_success(self) -> None:
+        """Record a successful call. Resets the breaker to closed state."""
+        self.failure_count = 0
+        self.cooldown_until = None
+
+    def is_open(self) -> bool:
+        """Return True if the breaker is open (adapter should be skipped)."""
+        if self.cooldown_until is None:
+            return False
+        if datetime.now() >= self.cooldown_until:
+            # Half-open: cooldown expired, allow a retry
+            self.cooldown_until = None
+            return False
+        return True
+
+
+# ============================================================
+# RESPONSE SELECTION — Primary Cortex hierarchy
+# ============================================================
+
+
+def select_best_response(
+    responses: Dict[str, str],
+    primary_name: str,
+) -> str:
+    """
+    Select the best response from multiple model outputs.
+
+    Strategy: the Primary Cortex response wins unless it is absent or
+    empty. This replaces the old ``max(responses, key=len)`` approach.
+
+    Args:
+        responses: Mapping of adapter name -> response text.
+        primary_name: Name of the primary cortex adapter.
+
+    Returns:
+        The selected response string (may be empty if all responses are empty).
+    """
+    if not responses:
+        return ""
+
+    # Primary cortex response is the default winner
+    if primary_name in responses and responses[primary_name].strip():
+        return responses[primary_name]
+
+    # Fallback: pick the most substantial non-empty response
+    non_empty = {k: v for k, v in responses.items() if v.strip()}
+    if non_empty:
+        return max(non_empty.values(), key=len)
+
+    return ""
+
+
+def is_task_complete(
+    response: str,
+    task: str,
+    cycle: int,
+    max_cycles: int,
+) -> bool:
+    """
+    Determine if a task is complete based on the response.
+
+    Replaces the old stub that always returned True.
+
+    Heuristics:
+    1. Max cycles reached -> complete (safety valve)
+    2. Empty response -> not complete
+    3. Response contains clarifying questions -> not complete
+    4. Response contains action intent -> not complete (on early cycles)
+    5. Substantive response without questions -> complete
+    """
+    if not isinstance(response, str):
+        raise TypeError("response must be a string")
+    if not isinstance(task, str):
+        raise TypeError("task must be a string")
+    if not isinstance(cycle, int):
+        raise TypeError("cycle must be an int")
+    if not isinstance(max_cycles, int):
+        raise TypeError("max_cycles must be an int")
+    if cycle < 0:
+        raise ValueError("cycle must be non-negative")
+    if max_cycles <= 0:
+        raise ValueError("max_cycles must be positive")
+
+    # Safety valve: max cycles
+    if cycle >= max_cycles:
+        return True
+
+    # Empty response
+    if not response or not response.strip():
+        return False
+
+    response_lower = response.lower().strip()
+
+    # Clarifying questions (response asks the user something)
+    question_indicators = [
+        "could you clarify",
+        "can you provide",
+        "what do you mean",
+        "could you be more specific",
+        "do you want me to",
+        "should i",
+        "would you like",
+    ]
+    if any(indicator in response_lower for indicator in question_indicators):
+        return False
+
+    # Action intent on early cycles (still working)
+    if cycle < max_cycles - 1:
+        action_indicators = [
+            "let me search",
+            "let me look",
+            "i'll check",
+            "searching for",
+            "looking up",
+            "let me find",
+            "i need to",
+        ]
+        if any(indicator in response_lower for indicator in action_indicators):
+            return False
+
+    # Substantive response (has content beyond filler)
+    words = response.split()
+    if len(words) < 3:
+        return False
+
+    return True
+
+
 def _get_identity_event_type(event: object) -> str:
     """Return a stable identity event type for tracing metadata."""
     event_type = getattr(event, "event_type", None)
@@ -53,6 +222,11 @@ def _get_identity_event_type(event: object) -> str:
         return trigger
 
     return "unknown"
+
+
+def get_identity_event_type(event: object) -> str:
+    """Public wrapper for identity event type normalization."""
+    return _get_identity_event_type(event)
 
 
 async def run_session(
@@ -93,6 +267,9 @@ class HiveConfig:
 
     # Maximum cycles for a task (safety limit)
     max_cycles: int = 20
+
+    # Per-adapter timeout (seconds)
+    adapter_timeout: float = 60.0
 
     # Whether to use semantic memory
     use_semantic_memory: bool = True
@@ -170,6 +347,7 @@ class HiveLoop:
         config: Optional[HiveConfig] = None,
         adapters: Optional[List[BaseAdapter]] = None,
         name: str = "assistant",
+        human_model: Optional[HumanModel] = None,
     ):
         self.config = config or HiveConfig()
         self.adapters: List[BaseAdapter] = adapters or []
@@ -178,6 +356,10 @@ class HiveLoop:
         # Core components
         self.state = HiveState()
         self.state.ensure_identity()  # Initialize identity on creation
+
+        # Wire HumanModel into state if provided
+        if human_model is not None:
+            self.state.human_model = human_model
         self.consensus = ConsensusEngine(self.config.consensus_config)
         self.router = None  # Initialized when adapters are added
 
@@ -191,7 +373,7 @@ class HiveLoop:
 
                 self._state_manager = PgStateManager(auto_sync_memory=self.config.auto_sync_memory)
                 logger.info("Using PgStateManager for memory persistence")
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(
                     f"Failed to initialize PgStateManager: {e}, falling back to in-memory"
                 )
@@ -232,6 +414,9 @@ class HiveLoop:
         self.cycle_count = 0
         self.history: List[Dict] = []
 
+        # Per-adapter circuit breakers (Amendment 13)
+        self._circuit_breakers: Dict[str, CircuitBreaker] = {}
+
     def add_adapter(self, adapter: BaseAdapter) -> None:
         """Add a model adapter to the hive."""
         self.adapters.append(adapter)
@@ -243,10 +428,148 @@ class HiveLoop:
         adapter = create_adapter(config)
         self.add_adapter(adapter)
 
+    # ============================================================
+    # PRIMARY CORTEX — Hierarchy, not democracy
+    # ============================================================
+
+    def get_primary_cortex(self) -> Optional[BaseAdapter]:
+        """
+        Get the primary cortex — the highest-weight adapter.
+
+        The Primary Cortex is the most capable model that orchestrates.
+        Advisory Lenses are consulted only when the Primary flags uncertainty.
+        """
+        if not self.adapters:
+            return None
+        return max(self.adapters, key=lambda a: a.weight)
+
+    def get_advisory_lenses(self) -> List[BaseAdapter]:
+        """Get advisory lenses (all adapters except primary cortex)."""
+        primary = self.get_primary_cortex()
+        if primary is None:
+            return []
+        return [a for a in self.adapters if a.name != primary.name]
+
+    # ============================================================
+    # ADAPTER CALL WITH TIMEOUT + CIRCUIT BREAKER (Amendment 13)
+    # ============================================================
+
+    async def _call_adapter_with_timeout(
+        self,
+        adapter: BaseAdapter,
+        task: str,
+        timeout: Optional[float] = None,
+    ) -> Optional[tuple]:
+        """
+        Call adapter.think() with timeout and circuit breaker protection.
+
+        Returns (response_text, HiveUpdate) on success, or None on failure/skip.
+        """
+        breaker = self._circuit_breakers.setdefault(
+            adapter.name,
+            CircuitBreaker(adapter_name=adapter.name),
+        )
+
+        if breaker.is_open():
+            logger.warning("Skipping %s — circuit breaker cooldown active", adapter.name)
+            return None
+
+        effective_timeout = timeout if timeout is not None else self.config.adapter_timeout
+
+        try:
+            result = await asyncio.wait_for(
+                adapter.think(self.state, task),
+                timeout=effective_timeout,
+            )
+            breaker.record_success()
+            return result
+        except asyncio.TimeoutError:
+            logger.warning("Adapter %s timed out after %.0fs", adapter.name, effective_timeout)
+            breaker.record_failure()
+            return None
+        except asyncio.CancelledError:
+            raise
+        except (
+            ConnectionError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+        ) as e:
+            logger.error("Adapter %s failed: %s", adapter.name, e)
+            breaker.record_failure()
+            return None
+        except Exception as e:
+            logger.error("Adapter %s failed with unexpected exception: %s", adapter.name, e)
+            breaker.record_failure()
+            return None
+
     def _rebuild_router(self) -> None:
         """Rebuild the domain router with current adapters."""
         if self.adapters:
             self.router = DomainRouter(self.adapters)
+
+    def extract_preference_signals(
+        self,
+        task: str,
+        response: str,
+    ) -> List[Dict]:
+        """Extract user preference signals from a task/response pair.
+
+        Uses heuristic keyword detection to identify communication
+        style preferences expressed in the user's input.
+
+        Args:
+            task: The user's original input.
+            response: The model's response.
+
+        Returns:
+            List of preference signal dicts with dimension, value, and confidence.
+        """
+        signals: List[Dict] = []
+        task_lower = task.lower()
+
+        detail_keywords = {
+            "detailed": "detailed",
+            "thorough": "detailed",
+            "in depth": "detailed",
+            "in-depth": "detailed",
+            "brief": "brief",
+            "concise": "brief",
+            "short": "brief",
+            "summary": "brief",
+        }
+        for keyword, value in detail_keywords.items():
+            if keyword in task_lower:
+                signals.append(
+                    {
+                        "dimension": "detail_level",
+                        "value": value,
+                        "confidence": 0.7,
+                    }
+                )
+                break
+
+        tone_keywords = {
+            "formal": "formal",
+            "casual": "casual",
+            "friendly": "casual",
+            "professional": "formal",
+        }
+        for keyword, value in tone_keywords.items():
+            if keyword in task_lower:
+                signals.append(
+                    {
+                        "dimension": "tone",
+                        "value": value,
+                        "confidence": 0.6,
+                    }
+                )
+                break
+
+        return signals
 
     async def think(self, task: str, max_cycles: Optional[int] = None) -> str:
         """
@@ -352,7 +675,7 @@ class HiveLoop:
                         logger.info(f"=== Cycle {self.cycle_count} ===")
 
                     # Run one cycle
-                    responses, updates = await self._run_cycle(task)
+                    response_map, updates = await self._run_cycle(task)
 
                     # === CONSENSUS SPAN ===
                     if should_trace_pipeline():
@@ -417,12 +740,21 @@ class HiveLoop:
                     ):
                         try:
                             self._state_manager.persist_identity_event(identity_event)
-                        except Exception as e:
+                        except (
+                            RuntimeError,
+                            ValueError,
+                            TypeError,
+                            KeyError,
+                            AttributeError,
+                            OSError,
+                        ) as e:
                             logger.warning(f"Failed to persist identity event: {e}")
 
-                    # Combine responses (take the most detailed)
-                    if responses:
-                        final_response = max(responses, key=len)
+                    # Combine responses — Primary Cortex hierarchy
+                    if response_map:
+                        primary = self.get_primary_cortex()
+                        primary_name = primary.name if primary else ""
+                        final_response = select_best_response(response_map, primary_name)
 
                         # === TOOL EXECUTION SPAN ===
                         if auto_execute_tools and self.tool_runtime:
@@ -460,7 +792,14 @@ class HiveLoop:
                                     )
                                     if tool_results and self.config.verbose:
                                         logger.info(f"Executed {len(tool_results)} tool call(s)")
-                            except Exception as e:
+                            except (
+                                RuntimeError,
+                                ValueError,
+                                TypeError,
+                                KeyError,
+                                AttributeError,
+                                OSError,
+                            ) as e:
                                 logger.warning(f"Tool execution failed: {e}")
 
                         # === CODE EXECUTION SPAN ===
@@ -491,7 +830,14 @@ class HiveLoop:
                                         logger.info(
                                             f"Executed {len(exec_results)} code block(s) in RLM sandbox"
                                         )
-                            except Exception as e:
+                            except (
+                                RuntimeError,
+                                ValueError,
+                                TypeError,
+                                KeyError,
+                                AttributeError,
+                                OSError,
+                            ) as e:
                                 logger.warning(f"Code execution failed: {e}")
 
                         if final_response:
@@ -501,6 +847,19 @@ class HiveLoop:
 
                         if self._session_manager:
                             await self._session_manager.maybe_flush_mid_session(conversation_log)
+
+                    # === HUMAN MODEL UPDATE ===
+                    if self.state.human_model is not None and final_response:
+                        self.state.human_model.interaction_count += 1
+                        signals = self.extract_preference_signals(task, final_response)
+                        for signal in signals:
+                            self.state.human_model.add_preference(
+                                Preference(
+                                    key=signal["dimension"],
+                                    value=signal["value"],
+                                    confidence=signal["confidence"],
+                                )
+                            )
 
                     # Compress memory periodically
                     if self.cycle_count % self.config.compress_every == 0:
@@ -519,7 +878,7 @@ class HiveLoop:
                     )
 
                     # Check if task is complete
-                    if self._is_task_complete(final_response, task):
+                    if self._is_task_complete(final_response, task, cycle, max_cycles):
                         logger.info("Task appears complete.")
                         break
 
@@ -541,7 +900,7 @@ class HiveLoop:
                     await self._session_manager.end_session(conversation_log)
                 return final_response
 
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 trace_ctx.set_level("ERROR")
                 trace_ctx.set_status_message(str(e))
                 raise
@@ -569,15 +928,26 @@ class HiveLoop:
             mirror=mirror, flush_mgr=flush_mgr, config=vecna_config
         )
 
+    async def ensure_session_manager(self, initial_query: Optional[str] = None) -> None:
+        """Public wrapper that ensures a SessionManager exists."""
+        await self._ensure_session_manager(initial_query)
+
+    def get_session_manager(self) -> Optional[SessionManager]:
+        """Return the active SessionManager, if initialized."""
+        return self._session_manager
+
     def initialize_session_manager(self) -> None:
         if self._session_manager is None:
             asyncio.run(self._ensure_session_manager())
 
-    async def _run_cycle(self, task: str) -> tuple[List[str], List[HiveUpdate]]:
+    async def _run_cycle(self, task: str) -> tuple[Dict[str, str], List[HiveUpdate]]:
         """
         Run one cycle of the hive loop.
 
         All selected models think in parallel, then we collect results.
+
+        Returns:
+            (response_map, updates) where response_map is {adapter_name: response_text}.
         """
         from vecna.observability.langfuse import trace_span, should_trace_pipeline
 
@@ -641,7 +1011,7 @@ class HiveLoop:
                                 f"PgRLM: {rlm_stats['num_facets']} facets, "
                                 f"{rlm_stats['total_items_retrieved']} items retrieved"
                             )
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"PgMemoryStore retrieval failed: {e}")
 
         # Fall back to in-memory MemoryStore
@@ -701,18 +1071,25 @@ class HiveLoop:
 
         # Run all models in parallel
         async def run_model(adapter: BaseAdapter) -> tuple[str, HiveUpdate]:
-            try:
-                return await adapter.think(self.state, task)
-            except Exception as e:
-                logger.error(f"Model {adapter.name} failed: {e}")
+            result = await self._call_adapter_with_timeout(
+                adapter,
+                task,
+                timeout=self.config.adapter_timeout,
+            )
+            if result is None:
                 return "", HiveUpdate(source_model=adapter.name)
+            return result
 
         results = await asyncio.gather(*[run_model(a) for a in selected])
 
         # Restore original summary
         self.state.memory_summary = original_summary
 
-        responses = [r[0] for r in results if r[0]]
+        # Build adapter_name -> response_text mapping (skip empty responses)
+        response_map: Dict[str, str] = {}
+        for adapter, result in zip(selected, results):
+            if result[0]:
+                response_map[adapter.name] = result[0]
         updates = [r[1] for r in results]
 
         # Update semantic memory with new items
@@ -720,12 +1097,12 @@ class HiveLoop:
         if self._state_manager:
             try:
                 self._state_manager.sync_memory_from_state(self.state)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"Failed to sync memory to PG: {e}")
         elif self.memory:
             self.memory.add_from_state(self.state)
 
-        return responses, updates
+        return response_map, updates
 
     async def _run_rewoo_task(self, task: str, session_id: str) -> RewooExecutionResult:
         """Run ReWOO plan-execute-synthesize path with structured fallback result."""
@@ -862,18 +1239,27 @@ class HiveLoop:
         if self._state_manager:
             try:
                 self._state_manager.flush_offline_spool()
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError):
                 pass
 
-    def _is_task_complete(self, response: str, task: str) -> bool:
+    def _is_task_complete(self, response: str, task: str, cycle: int, max_cycles: int) -> bool:
         """
-        Simple heuristic to detect if task is complete.
+        Heuristic to detect if task is complete based on response content.
 
-        In a real system, you'd use more sophisticated methods.
+        Delegates to the module-level ``is_task_complete()`` function.
+
+        Args:
+            response: The model's response text.
+            task: The original task/query.
+            cycle: The current cycle index within this task (0-based).
+            max_cycles: Maximum number of cycles allowed.
         """
-        # For now, just run one cycle for simple tasks
-        # Multi-cycle tasks would need explicit continuation signals
-        return True
+        return is_task_complete(
+            response=response,
+            task=task,
+            cycle=cycle,
+            max_cycles=max_cycles,
+        )
 
     async def continuous_think(
         self,
@@ -890,7 +1276,7 @@ class HiveLoop:
         self.state.add_goal(goal)
 
         while True:
-            responses, updates = await self._run_cycle(task)
+            response_map, updates = await self._run_cycle(task)
             self.consensus.merge_updates(
                 updates,
                 self.state,
@@ -908,14 +1294,25 @@ class HiveLoop:
             if identity_event and self.config.persist_identity_events and self._state_manager:
                 try:
                     self._state_manager.persist_identity_event(identity_event)
-                except Exception as e:
+                except (
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                ) as e:
                     logger.warning(f"Failed to persist identity event: {e}")
 
             if self.cycle_count % self.config.compress_every == 0:
                 self._maybe_flush_memory_before_compression()
                 await self._compress_memory()
 
-            response = max(responses, key=len) if responses else ""
+            response = ""
+            if response_map:
+                primary = self.get_primary_cortex()
+                primary_name = primary.name if primary else ""
+                response = select_best_response(response_map, primary_name)
 
             # Execute any tool calls in the response
             if response and self.config.auto_execute_tools and self.tool_runtime:
@@ -923,14 +1320,28 @@ class HiveLoop:
                     response, _ = await self.tool_runtime.execute_calls(
                         response, self._build_tool_execution_context(session_id=None)
                     )
-                except Exception as e:
+                except (
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                ) as e:
                     logger.warning(f"Tool execution failed: {e}")
 
             # Execute any Python code blocks in the response via RLM sandbox
             if response and self.config.auto_execute_code:
                 try:
                     response, _ = await execute_and_inject(response)
-                except Exception as e:
+                except (
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                ) as e:
                     logger.warning(f"Code execution failed: {e}")
 
             if callback:
@@ -965,7 +1376,7 @@ class HiveLoop:
             try:
                 self._state_manager.save_state(self.state)
                 logger.info("State saved to PostgreSQL")
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"PostgreSQL save failed: {e}")
                 # Fall back to file if PG fails and filepath given
                 if filepath:
@@ -1005,7 +1416,7 @@ class HiveLoop:
                     logger.info("State loaded from PostgreSQL")
                 else:
                     logger.info("No existing state in PostgreSQL, using fresh state")
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
                 logger.warning(f"PostgreSQL load failed: {e}")
         else:
             logger.warning("No filepath provided and PgStateManager not available")

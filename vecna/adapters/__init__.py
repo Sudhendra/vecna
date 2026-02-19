@@ -9,6 +9,8 @@ from vecna.adapters.base import (
     create_adapter,
     HIVE_IDENTITY_PROMPT,
 )
+from vecna.adapters.openai_adapter import OpenAIAdapter
+from vecna.adapters.anthropic_adapter import AnthropicAdapter
 
 __all__ = [
     "BaseAdapter",
@@ -17,6 +19,8 @@ __all__ = [
     "TransformersAdapter",
     "GroqAdapter",
     "CopilotAdapter",
+    "OpenAIAdapter",
+    "AnthropicAdapter",
     "create_adapter",
     "HIVE_IDENTITY_PROMPT",
 ]

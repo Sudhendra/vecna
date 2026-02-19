@@ -4,11 +4,43 @@ Core data structures for the Hive Mind.
 These define the "contract" — the shared mental state that makes all models ONE.
 """
 
+import dataclasses
+import math
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from datetime import datetime
 from enum import Enum
 import uuid
+
+
+class SerializableMixin:
+    """
+    Generic serialization mixin for all dataclasses (Amendment 7).
+
+    Provides to_dict() with automatic datetime-to-ISO and enum-to-value conversion.
+    Subclasses may override to_dict() for custom logic but should call super().to_dict()
+    and modify the result.
+    """
+
+    def to_dict(self) -> Dict:
+        """Convert dataclass to dict with datetime/enum conversion."""
+
+        def _convert(value: object) -> object:
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, Enum):
+                return value.value
+            if isinstance(value, list):
+                return [_convert(v) for v in value]
+            if isinstance(value, dict):
+                return {k: _convert(v) for k, v in value.items()}
+            return value
+
+        result = {}
+        for f in dataclasses.fields(self):  # type: ignore[arg-type]
+            value = getattr(self, f.name)
+            result[f.name] = _convert(value)
+        return result
 
 
 class ConfidenceLevel(Enum):
@@ -22,7 +54,7 @@ class ConfidenceLevel(Enum):
 
 
 @dataclass
-class Fact:
+class Fact(SerializableMixin):
     """
     A verified piece of knowledge in the hive mind.
     Facts are high-confidence items with evidence.
@@ -37,8 +69,38 @@ class Fact:
     timestamp: datetime = field(default_factory=datetime.now)
     embedding: Optional[List[float]] = None
 
+    # Temporal awareness
+    valid_until: Optional[datetime] = None  # None = never expires
+    source_type: str = "stated"  # stated, observation, inference, user_provided
+
+    def is_expired(self) -> bool:
+        """Check if this fact has passed its validity window."""
+        if self.valid_until is None:
+            return False
+        return datetime.now() > self.valid_until
+
+    def staleness_score(self) -> float:
+        """
+        Return 0.0 (fresh) to 1.0 (very stale) based on age.
+
+        Uses logarithmic decay: facts get stale quickly at first, then plateau.
+        log(1 + hours) / log(1 + 720) gives ~1.0 at 30 days.
+        """
+        age_hours = (datetime.now() - self.timestamp).total_seconds() / 3600
+        if age_hours <= 0:
+            return 0.0
+        return min(1.0, math.log1p(age_hours) / math.log1p(720))
+
+    def effective_confidence(self) -> float:
+        """Confidence adjusted for staleness and expiry."""
+        if self.is_expired():
+            return 0.0
+        staleness_penalty = self.staleness_score() * 0.3  # Max 30% penalty
+        return max(0.0, self.confidence - staleness_penalty)
+
     def to_dict(self) -> Dict:
-        return {
+        """Serialize Fact to dict, omitting embedding and None valid_until."""
+        result = {
             "id": self.id,
             "content": self.content,
             "confidence": self.confidence,
@@ -46,19 +108,25 @@ class Fact:
             "evidence": self.evidence,
             "domain": self.domain,
             "timestamp": self.timestamp.isoformat(),
+            "source_type": self.source_type,
         }
+        if self.valid_until is not None:
+            result["valid_until"] = self.valid_until.isoformat()
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict) -> "Fact":
         data = data.copy()
         if "timestamp" in data and isinstance(data["timestamp"], str):
             data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+        if "valid_until" in data and isinstance(data["valid_until"], str):
+            data["valid_until"] = datetime.fromisoformat(data["valid_until"])
         data.pop("embedding", None)
         return cls(**data)
 
 
 @dataclass
-class Belief:
+class Belief(SerializableMixin):
     """
     A belief held by the hive mind.
     Beliefs are interpretations or opinions, not raw facts.
@@ -94,7 +162,7 @@ class Belief:
 
 
 @dataclass
-class Hypothesis:
+class Hypothesis(SerializableMixin):
     """
     A tentative idea being explored by the hive.
     Hypotheses may become beliefs or facts, or be discarded.
@@ -128,7 +196,7 @@ class Hypothesis:
 
 
 @dataclass
-class Goal:
+class Goal(SerializableMixin):
     """
     An active objective the hive is pursuing.
     """
@@ -161,7 +229,7 @@ class Goal:
 
 
 @dataclass
-class Plan:
+class Plan(SerializableMixin):
     """
     A sequence of steps to achieve a goal.
     """
@@ -192,7 +260,7 @@ class Plan:
 
 
 @dataclass
-class OpenQuestion:
+class OpenQuestion(SerializableMixin):
     """
     An unresolved query the hive needs to answer.
     """
@@ -225,7 +293,7 @@ class OpenQuestion:
 
 
 @dataclass
-class Contradiction:
+class Contradiction(SerializableMixin):
     """
     A conflict between two beliefs or facts.
     The hive tracks these explicitly rather than hiding them.
@@ -263,7 +331,7 @@ class Contradiction:
 
 
 @dataclass
-class HiveUpdate:
+class HiveUpdate(SerializableMixin):
     """
     An update proposal from a model to the hive state.
     This is parsed from model outputs.
@@ -277,6 +345,7 @@ class HiveUpdate:
     new_plans: List[Dict] = field(default_factory=list)
     open_questions: List[Dict] = field(default_factory=list)
     contradictions_found: List[Dict] = field(default_factory=list)
+    user_preferences_observed: List[Dict] = field(default_factory=list)
     confidence: float = 0.5
     raw_output: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
@@ -291,6 +360,7 @@ class HiveUpdate:
             "new_plans": self.new_plans,
             "open_questions": self.open_questions,
             "contradictions_found": self.contradictions_found,
+            "user_preferences_observed": self.user_preferences_observed,
             "confidence": self.confidence,
             "timestamp": self.timestamp.isoformat(),
         }
@@ -310,7 +380,7 @@ class IdentityTone(Enum):
 
 
 @dataclass
-class IdentityKernel:
+class IdentityKernel(SerializableMixin):
     """
     The immutable core identity of Vecna.
 
@@ -356,7 +426,7 @@ class IdentityKernel:
 
 
 @dataclass
-class SelfModel:
+class SelfModel(SerializableMixin):
     """
     The dynamic, experience-driven self-model of Vecna.
 
@@ -445,7 +515,7 @@ class SelfModel:
 
 
 @dataclass
-class IdentityEvent:
+class IdentityEvent(SerializableMixin):
     """
     A record in the identity timeline — the history of becoming.
 

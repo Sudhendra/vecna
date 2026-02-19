@@ -3,8 +3,12 @@ Consensus Engine: Merging multiple model updates into coherent hive state.
 
 This is where "many minds become one" — the consensus mechanism that
 reconciles different model outputs into a unified mental state.
+
+Supports embedding-based cosine similarity (Amendment 14) with Jaccard
+fallback when embeddings are unavailable.
 """
 
+import math
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
@@ -216,17 +220,49 @@ class ConsensusEngine:
 
         return clusters
 
-    def _is_similar(self, text1: str, text2: str) -> bool:
-        """Check if two texts are semantically similar."""
-        words1 = set(text1.split())
-        words2 = set(text2.split())
+    def _cosine_similarity(
+        self,
+        vec_a: List[float],
+        vec_b: List[float],
+    ) -> float:
+        """Compute cosine similarity between two vectors.
 
+        Returns 0.0 for empty, mismatched-length, or zero-magnitude vectors.
+        """
+        if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+            return 0.0
+        dot = sum(a * b for a, b in zip(vec_a, vec_b))
+        mag_a = math.sqrt(sum(a * a for a in vec_a))
+        mag_b = math.sqrt(sum(b * b for b in vec_b))
+        if mag_a == 0.0 or mag_b == 0.0:
+            return 0.0
+        return dot / (mag_a * mag_b)
+
+    def _is_similar(
+        self,
+        text1: str,
+        text2: str,
+        embedding_a: Optional[List[float]] = None,
+        embedding_b: Optional[List[float]] = None,
+    ) -> bool:
+        """Check similarity using embeddings first, Jaccard as fallback.
+
+        When both embeddings are provided, cosine similarity is used exclusively.
+        The Jaccard fallback is only used when embeddings are unavailable.
+        Per Amendment 14, embedding cosine is acceptable for response-level
+        consensus (n = number of adapters, always small).
+        """
+        if embedding_a is not None and embedding_b is not None:
+            sim = self._cosine_similarity(embedding_a, embedding_b)
+            return sim >= self.config.similarity_threshold
+
+        # Fallback: Jaccard word overlap
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
         if not words1 or not words2:
             return False
-
         intersection = len(words1 & words2)
         union = len(words1 | words2)
-
         jaccard = intersection / union if union > 0 else 0
         return jaccard >= self.config.similarity_threshold
 

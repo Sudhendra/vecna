@@ -111,3 +111,28 @@ def test_pg_goal_queue_mark_completed(postgres_available, postgres_db):
 
     assert status == "completed"
     assert completed_at is not None
+
+
+@pytest.mark.integration
+def test_pg_goal_queue_pops_highest_priority_first(postgres_available, postgres_db):
+    if not postgres_available:
+        pytest.skip("PostgreSQL not available")
+
+    _reset_goal_queue_table(postgres_db)
+
+    queue = PgGoalQueue(connection_string="postgresql://unused")
+    queue._conn = postgres_db
+
+    low_goal = f"low-priority {uuid.uuid4()}"
+    critical_goal = f"critical-priority {uuid.uuid4()}"
+
+    queue.push(low_goal, priority=3)
+    queue.push(critical_goal, priority=0)
+
+    first = queue.pop()
+    second = queue.pop()
+
+    assert first is not None
+    assert second is not None
+    assert first["goal"] == critical_goal
+    assert second["goal"] == low_goal

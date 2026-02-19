@@ -11,6 +11,13 @@ from vecna.core.types import (
     ConfidenceLevel,
 )
 from vecna.core.hive_state import HiveState
+from vecna.core.human_model import (
+    HumanModel,
+    Preference,
+    CommunicationStyle,
+    InteractionPattern,
+    EmotionalContext,
+)
 
 __all__ = [
     "Fact",
@@ -23,4 +30,9 @@ __all__ = [
     "HiveUpdate",
     "ConfidenceLevel",
     "HiveState",
+    "HumanModel",
+    "Preference",
+    "CommunicationStyle",
+    "InteractionPattern",
+    "EmotionalContext",
 ]

@@ -22,6 +22,8 @@ class Provider(str, Enum):
     OLLAMA = "ollama"  # Local models via Ollama
     TRANSFORMERS = "transformers"  # Local HuggingFace models
     GROQ = "groq"  # Groq fast inference (optional)
+    OPENAI = "openai"  # Native OpenAI API
+    ANTHROPIC = "anthropic"  # Native Anthropic API
 
 
 class StorageBackend(str, Enum):
@@ -360,6 +362,7 @@ class VecnaConfig:
     # Runtime defaults
     active_group: str = "default"
     active_persona: str = "concise"
+    primary_model: Optional[str] = None
     workspace_dir: str = "~/.vecna"
 
     # Memory substrate settings
@@ -466,6 +469,7 @@ class VecnaConfig:
             "memory": self.memory.to_dict(),
             "active_group": self.active_group,
             "active_persona": self.active_persona,
+            "primary_model": self.primary_model,
             "workspace_dir": self.workspace_dir,
             "max_parallel_models": self.max_parallel_models,
             "use_routing": self.use_routing,
@@ -551,6 +555,7 @@ class VecnaConfig:
             memory=memory,
             active_group=data.get("active_group", "default"),
             active_persona=data.get("active_persona", "concise"),
+            primary_model=data.get("primary_model"),
             workspace_dir=data.get("workspace_dir", "~/.vecna"),
             max_parallel_models=data.get("max_parallel_models", 5),
             use_routing=data.get("use_routing", True),

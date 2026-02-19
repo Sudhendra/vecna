@@ -1319,6 +1319,44 @@ def speak(ctx, task, no_save):
 
 
 # ============================================================
+# SERVER COMMAND
+# ============================================================
+
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
+@click.option("--port", default=8420, show_default=True, help="Port to listen on")
+def serve(host: str, port: int):
+    """Start the Vecna HTTP server."""
+    from vecna.server.app import run_server
+
+    run_server(host=host, port=port)
+
+
+# ============================================================
+# TUI COMMAND
+# ============================================================
+
+
+@cli.command()
+def tui():
+    """Launch the Vecna TUI (Textual terminal interface)."""
+    try:
+        from vecna.tui.app import TEXTUAL_AVAILABLE, VecnaTUI
+    except ImportError as e:
+        click.echo(f"TUI dependencies missing: {e}")
+        raise SystemExit(1)
+
+    if not TEXTUAL_AVAILABLE:
+        click.echo("Textual not installed. Install with: pip install textual trogon")
+        raise SystemExit(1)
+
+    app = VecnaTUI()
+    click.echo("Launching Vecna TUI...")
+    app.run()
+
+
+# ============================================================
 # HEARTBEAT COMMANDS
 # ============================================================
 

@@ -82,6 +82,29 @@ def get_default_registry(
             executor=web_search_executor,
         )
 
+        try:
+            from vecna.tools.summarize_tool import SUMMARIZE_TOOL_SPEC, summarize_executor
+
+            registry.register(SUMMARIZE_TOOL_SPEC, summarize_executor)
+        except ImportError:
+            pass  # summarize tool not available
+
+        try:
+            from vecna.tools.browser_tool import (
+                BROWSER_CLICK_SPEC,
+                BROWSER_NAVIGATE_SPEC,
+                BROWSER_SCREENSHOT_SPEC,
+                browser_click_executor,
+                browser_navigate_executor,
+                browser_screenshot_executor,
+            )
+
+            registry.register(BROWSER_NAVIGATE_SPEC, browser_navigate_executor)
+            registry.register(BROWSER_SCREENSHOT_SPEC, browser_screenshot_executor)
+            registry.register(BROWSER_CLICK_SPEC, browser_click_executor)
+        except ImportError:
+            pass  # playwright not installed
+
     if enable_fs_tools:
         registry.register(
             ToolSpec(

@@ -146,6 +146,50 @@ class TestFactOperations:
 
         assert all(f.confidence >= 0.85 for f in high_conf)
 
+    def test_add_fact_dedup_uses_embedding_cosine(self, clean_state):
+        """If both facts have embeddings, deduplication uses cosine similarity."""
+        state = clean_state
+
+        original = Fact(
+            content="Saturn has a complex ring system",
+            confidence=0.6,
+            source_model="model-a",
+            embedding=[1.0, 0.0, 0.0],
+        )
+        candidate = Fact(
+            content="The sixth planet has extensive rings",
+            confidence=0.9,
+            source_model="model-b",
+            evidence="telescope",
+            embedding=[0.95, 0.05, 0.0],
+        )
+
+        assert state.add_fact(original) is True
+        result = state.add_fact(candidate)
+
+        assert result is False
+        assert len(state.facts) == 1
+        assert state.facts[0].confidence == 0.9
+        assert state.facts[0].evidence == "telescope"
+
+    def test_add_fact_no_jaccard_when_only_one_embedding_present(self, clean_state):
+        """Jaccard fallback applies only when neither fact has embeddings."""
+        state = clean_state
+
+        first = Fact(content="Mars has two moons", confidence=0.6, source_model="model-a")
+        second = Fact(
+            content="Mars has two moons",
+            confidence=0.9,
+            source_model="model-b",
+            embedding=[1.0, 0.0, 0.0],
+        )
+
+        assert state.add_fact(first) is True
+        result = state.add_fact(second)
+
+        assert result is True
+        assert len(state.facts) == 2
+
 
 class TestBeliefOperations:
     """Tests for belief management in HiveState."""
