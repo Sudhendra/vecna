@@ -89,11 +89,11 @@ pytest tests/unit/ tests/integration/ -v --tb=short
 | 22 | ... | `done` | 354741c | | | |
 | 23 | ... | `done` | 7c95caf | | |
 | 24 | Message Router — Unified Channel Dispatch | Convergence | 9 | `done` | |
-| 25 | TUI Upgrade — Textual + trogon | Convergence | — | `todo` | |
-| 26 | Wire Server to HiveLoop (Full Stack) | Convergence | 3, 6 | `todo` | |
-| 27 | Substrate Encryption Integration | Convergence | 12 | `todo` | |
-| 28 | Observability Dashboard | Convergence | — | `todo` | |
-| 29 | End-to-End Integration Tests + Documentation | Convergence | — | `todo` | |
+| 25 | ... | `done` | c24c0f3 | | | |
+| 26 | ... | `done` | c24c0f3 | | | |
+| 27 | ... | `done` | 9264774 | | | |
+| 28 | ... | `done` | d32a2af | | | |
+| 29 | ... | `done` | 98e0522 | | | |
 
 ### Gate 5: After Task 29 (Full Stack)
 ```bash

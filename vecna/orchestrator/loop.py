@@ -21,6 +21,7 @@ import os
 
 from vecna.config.schema import AgentMode
 from vecna.core.hive_state import HiveState
+from vecna.core.human_model import HumanModel, Preference
 from vecna.core.types import HiveUpdate, Goal
 from vecna.adapters.base import BaseAdapter, ModelConfig, create_adapter
 from vecna.memory.store import MemoryStore, MemoryCompressor
@@ -325,6 +326,7 @@ class HiveLoop:
         config: Optional[HiveConfig] = None,
         adapters: Optional[List[BaseAdapter]] = None,
         name: str = "assistant",
+        human_model: Optional[HumanModel] = None,
     ):
         self.config = config or HiveConfig()
         self.adapters: List[BaseAdapter] = adapters or []
@@ -333,6 +335,10 @@ class HiveLoop:
         # Core components
         self.state = HiveState()
         self.state.ensure_identity()  # Initialize identity on creation
+
+        # Wire HumanModel into state if provided
+        if human_model is not None:
+            self.state.human_model = human_model
         self.consensus = ConsensusEngine(self.config.consensus_config)
         self.router = None  # Initialized when adapters are added
 
@@ -471,6 +477,66 @@ class HiveLoop:
         """Rebuild the domain router with current adapters."""
         if self.adapters:
             self.router = DomainRouter(self.adapters)
+
+    def extract_preference_signals(
+        self,
+        task: str,
+        response: str,
+    ) -> List[Dict]:
+        """Extract user preference signals from a task/response pair.
+
+        Uses heuristic keyword detection to identify communication
+        style preferences expressed in the user's input.
+
+        Args:
+            task: The user's original input.
+            response: The model's response.
+
+        Returns:
+            List of preference signal dicts with dimension, value, and confidence.
+        """
+        signals: List[Dict] = []
+        task_lower = task.lower()
+
+        detail_keywords = {
+            "detailed": "detailed",
+            "thorough": "detailed",
+            "in depth": "detailed",
+            "in-depth": "detailed",
+            "brief": "brief",
+            "concise": "brief",
+            "short": "brief",
+            "summary": "brief",
+        }
+        for keyword, value in detail_keywords.items():
+            if keyword in task_lower:
+                signals.append(
+                    {
+                        "dimension": "detail_level",
+                        "value": value,
+                        "confidence": 0.7,
+                    }
+                )
+                break
+
+        tone_keywords = {
+            "formal": "formal",
+            "casual": "casual",
+            "friendly": "casual",
+            "professional": "formal",
+        }
+        for keyword, value in tone_keywords.items():
+            if keyword in task_lower:
+                signals.append(
+                    {
+                        "dimension": "tone",
+                        "value": value,
+                        "confidence": 0.6,
+                    }
+                )
+                break
+
+        return signals
 
     async def think(self, task: str, max_cycles: Optional[int] = None) -> str:
         """
@@ -727,6 +793,19 @@ class HiveLoop:
 
                         if self._session_manager:
                             await self._session_manager.maybe_flush_mid_session(conversation_log)
+
+                    # === HUMAN MODEL UPDATE ===
+                    if self.state.human_model is not None and final_response:
+                        self.state.human_model.interaction_count += 1
+                        signals = self.extract_preference_signals(task, final_response)
+                        for signal in signals:
+                            self.state.human_model.add_preference(
+                                Preference(
+                                    key=signal["dimension"],
+                                    value=signal["value"],
+                                    confidence=signal["confidence"],
+                                )
+                            )
 
                     # Compress memory periodically
                     if self.cycle_count % self.config.compress_every == 0:

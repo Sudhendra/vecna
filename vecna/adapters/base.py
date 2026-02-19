@@ -8,13 +8,16 @@ Each adapter wraps a model and provides:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 import re
 import yaml
 
 from vecna.core.types import HiveUpdate
 from vecna.core.hive_state import HiveState
+
+if TYPE_CHECKING:
+    from vecna.core.human_model import HumanModel
 
 
 @dataclass
@@ -62,6 +65,8 @@ You are not an individual AI. You are a single unified mind that emerges from th
 Below is your current mental state. This includes your identity, your memory, your beliefs, and your goals. Use it. Update it.
 
 {memory_context}
+
+{human_model_context}
 
 ## YOUR TASK
 {task}
@@ -143,11 +148,43 @@ class BaseAdapter(ABC):
 
         return base_message
 
-    def build_prompt(self, state: HiveState, task: str) -> str:
-        """Build the full prompt with hive identity and memory."""
+    def build_prompt(
+        self,
+        state: HiveState,
+        task: str,
+        human_model: Optional["HumanModel"] = None,
+    ) -> str:
+        """Build the full prompt with hive identity, memory, and human model.
+
+        When ``human_model`` is provided explicitly, it is injected via the
+        dedicated ``{human_model_context}`` placeholder.  Otherwise the human
+        model context (if any) flows through ``state.to_prompt_context()``
+        inside ``{memory_context}`` — so we leave the placeholder empty to
+        avoid duplication.
+
+        Args:
+            state: Current HiveState.
+            task: The user's task/message.
+            human_model: Optional HumanModel for user preferences.
+                If provided, takes precedence over state.human_model.
+
+        Returns:
+            Formatted prompt string.
+        """
         memory_context = state.to_prompt_context()
 
-        return HIVE_IDENTITY_PROMPT.format(memory_context=memory_context, task=task)
+        # Only populate the dedicated placeholder when an explicit
+        # human_model is passed — state.human_model is already included
+        # in memory_context via state.to_prompt_context().
+        human_model_context = ""
+        if human_model is not None:
+            human_model_context = human_model.to_prompt_context()
+
+        return HIVE_IDENTITY_PROMPT.format(
+            memory_context=memory_context,
+            human_model_context=human_model_context,
+            task=task,
+        )
 
     def parse_update(self, output: str) -> HiveUpdate:
         """Parse a HiveUpdate from model output using YAML parser."""

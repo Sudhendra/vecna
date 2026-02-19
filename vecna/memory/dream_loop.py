@@ -182,14 +182,18 @@ class DreamLoop:
         try:
             with conn.cursor() as cur:
                 # Get events older than cutoff that haven't been compressed
+                # Amendment 15: Use JSONB @> containment with GIN index instead of
+                # LIKE pattern matching on stringified JSON (which is slow and
+                # incorrectly matches ID 1 against 10, 100, etc.)
                 cur.execute(
                     """
                     SELECT id, event_type, payload, session_id, created_at
                     FROM memory_events
                     WHERE created_at < %s
                     AND NOT EXISTS (
-                        SELECT 1 FROM episodes e 
-                        WHERE e.metadata->>'source_event_ids' LIKE '%%' || memory_events.id::text || '%%'
+                        SELECT 1 FROM episodes e
+                        WHERE (e.metadata->'source_event_ids')::jsonb @>
+                              to_jsonb(memory_events.id::text)
                     )
                     ORDER BY created_at
                     LIMIT 1000
@@ -242,7 +246,7 @@ class DreamLoop:
                 if not dry_run:
                     conn.commit()
 
-        except Exception as e:
+        except (KeyError, ValueError, TypeError, json.JSONDecodeError, OSError) as e:
             logger.error(f"Event compression error: {e}")
             if not dry_run:
                 conn.rollback()
@@ -359,12 +363,16 @@ Summary:"""
 
         try:
             return self.summarizer(prompt)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.error(f"LLM summarization failed: {e}")
             return self._simple_summarize(set(), [], len(events))
 
     def _reinforce_memories(self, dry_run: bool) -> int:
-        """Reinforce frequently-accessed memories."""
+        """Reinforce frequently-accessed memories.
+
+        Amendment 15: Uses batched UPDATE ... FROM (VALUES ...) instead of
+        per-item UPDATEs for better performance on large datasets.
+        """
         if not self.pg_store:
             return 0
 
@@ -387,29 +395,37 @@ Summary:"""
 
                 rows = cur.fetchall()
 
+                # Calculate new confidence values for each candidate
+                updates = []
                 for item_id, confidence, retrieval_count in rows:
-                    # Calculate reinforcement boost
                     boost = min(0.1, retrieval_count * 0.01)
                     new_confidence = min(0.99, confidence + boost)
-
-                    if dry_run:
-                        reinforced += 1
-                        continue
-
-                    cur.execute(
-                        """
-                        UPDATE memory_items
-                        SET confidence = %s, updated_at = %s
-                        WHERE id = %s
-                    """,
-                        (new_confidence, datetime.now(), item_id),
-                    )
+                    updates.append((item_id, new_confidence))
                     reinforced += 1
 
-                if not dry_run:
-                    conn.commit()
+                if dry_run or not updates:
+                    if not dry_run:
+                        conn.commit()
+                    return reinforced
 
-        except Exception as e:
+                # Batched UPDATE via FROM (VALUES ...) — Amendment 15
+                now = datetime.now()
+                values_clause = ", ".join(
+                    cur.mogrify("(%s, %s)", (uid, conf)).decode() for uid, conf in updates
+                )
+                cur.execute(
+                    f"""
+                    UPDATE memory_items
+                    SET confidence = data.new_conf,
+                        updated_at = %s
+                    FROM (VALUES {values_clause}) AS data(id, new_conf)
+                    WHERE memory_items.id = data.id
+                    """,
+                    (now,),
+                )
+                conn.commit()
+
+        except (KeyError, ValueError, TypeError, OSError) as e:
             logger.error(f"Memory reinforcement error: {e}")
             if not dry_run:
                 conn.rollback()
@@ -417,7 +433,11 @@ Summary:"""
         return reinforced
 
     def _decay_memories(self, dry_run: bool) -> int:
-        """Decay stale memories that haven't been accessed."""
+        """Decay stale memories that haven't been accessed.
+
+        Amendment 15: Uses batched UPDATE ... FROM (VALUES ...) instead of
+        per-item UPDATEs for better performance on large datasets.
+        """
         if not self.pg_store:
             return 0
 
@@ -443,27 +463,36 @@ Summary:"""
 
                 rows = cur.fetchall()
 
+                # Calculate new confidence values for each candidate
+                updates = []
                 for item_id, confidence in rows:
                     new_confidence = max(self.min_confidence, confidence - self.decay_rate)
-
-                    if dry_run:
-                        decayed += 1
-                        continue
-
-                    cur.execute(
-                        """
-                        UPDATE memory_items
-                        SET confidence = %s, updated_at = %s
-                        WHERE id = %s
-                    """,
-                        (new_confidence, datetime.now(), item_id),
-                    )
+                    updates.append((item_id, new_confidence))
                     decayed += 1
 
-                if not dry_run:
-                    conn.commit()
+                if dry_run or not updates:
+                    if not dry_run:
+                        conn.commit()
+                    return decayed
 
-        except Exception as e:
+                # Batched UPDATE via FROM (VALUES ...) — Amendment 15
+                now = datetime.now()
+                values_clause = ", ".join(
+                    cur.mogrify("(%s, %s)", (uid, conf)).decode() for uid, conf in updates
+                )
+                cur.execute(
+                    f"""
+                    UPDATE memory_items
+                    SET confidence = data.new_conf,
+                        updated_at = %s
+                    FROM (VALUES {values_clause}) AS data(id, new_conf)
+                    WHERE memory_items.id = data.id
+                    """,
+                    (now,),
+                )
+                conn.commit()
+
+        except (KeyError, ValueError, TypeError, OSError) as e:
             logger.error(f"Memory decay error: {e}")
             if not dry_run:
                 conn.rollback()
@@ -505,7 +534,7 @@ Summary:"""
                     try:
                         related = search(theme, top_k=3)
                         related_count = len(related or [])
-                    except Exception:
+                    except (KeyError, ValueError, TypeError) as _search_err:
                         related_count = 0
 
                 base_text = (
@@ -519,7 +548,7 @@ Summary:"""
                     prompt = f"Convert this memory signal into one concise insight: {base_text}"
                     try:
                         insight_text = self.summarizer(prompt)
-                    except Exception as e:
+                    except (OSError, RuntimeError, ValueError) as e:
                         logger.error(f"Insight summarization failed for theme '{theme}': {e}")
 
                 if dry_run:
@@ -547,7 +576,7 @@ Summary:"""
                     generated += 1
 
             return generated
-        except Exception as e:
+        except (KeyError, ValueError, TypeError, OSError) as e:
             logger.error(f"Insight generation error: {e}")
             return 0
 
@@ -721,7 +750,7 @@ Summary:"""
                 payload=result.to_dict(),
             )
             self.pg_store.add_event(event)
-        except Exception as e:
+        except (KeyError, ValueError, TypeError, OSError) as e:
             logger.error(f"Failed to record dream event: {e}")
 
 

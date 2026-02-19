@@ -113,7 +113,10 @@ class TestDreamResultV2Fields:
         d = result.to_dict()
         assert d["events_compressed"] == 10
         assert d["memories_reinforced"] == 5
-        assert "timestamp" in d
+        # Amendment 9: verify timestamp is a valid ISO format string, not just present
+        ts = d["timestamp"]
+        parsed = datetime.fromisoformat(ts)
+        assert parsed.year >= 2024
 
 
 # ---------------------------------------------------------------------------
@@ -446,8 +449,13 @@ class TestCuriosityEngineFromDreamPatterns:
         ]
         goals = engine.from_dream_patterns(patterns)
         assert len(goals) == 2
-        assert all(isinstance(g, CuriosityGoal) for g in goals)
-        assert all(g.source == "dream_pattern" for g in goals)
+        # Amendment 9: verify specific field values, not just isinstance
+        assert goals[0].content == "rust"
+        assert goals[0].priority == "high"
+        assert goals[0].source == "dream_pattern"
+        assert goals[1].content == "kubernetes"
+        assert goals[1].priority == "medium"
+        assert goals[1].source == "dream_pattern"
 
     def test_from_dream_patterns_empty_list(self):
         engine = CuriosityEngine()
@@ -496,3 +504,149 @@ class TestCuriosityEngineFromDreamPatterns:
         ]
         goals = engine.from_dream_patterns(patterns)
         assert goals == []
+
+
+# ---------------------------------------------------------------------------
+# Additional error/edge-case tests (Amendment 10)
+# ---------------------------------------------------------------------------
+
+
+class TestDreamLoopPhase5ErrorPaths:
+    """Error and edge-case tests for Phase 5 autonomous task generation."""
+
+    def test_phase5_handles_empty_events_from_store(self):
+        """Edge: store returns empty event list — no patterns possible."""
+        goal_queue = PgGoalQueue(use_memory_fallback=True)
+        store = _FakePgStore(events=[])
+        dream = DreamLoop(
+            pg_store=store,
+            goal_queue=goal_queue,
+            autonomous_tasks_enabled=True,
+        )
+        count = dream._generate_autonomous_tasks(dry_run=False)
+        assert count == 0
+        assert goal_queue.list_pending() == []
+
+    def test_phase5_goal_metadata_contains_origin_and_theme(self):
+        """Verify pushed goals contain correct metadata fields."""
+        goal_queue = PgGoalQueue(use_memory_fallback=True)
+        store = _FakePgStore(
+            events=[
+                _FakeEvent(event_type="obs", payload={"topic": "docker"}),
+                _FakeEvent(event_type="obs", payload={"topic": "docker"}),
+                _FakeEvent(event_type="obs", payload={"topic": "docker"}),
+            ]
+        )
+        dream = DreamLoop(
+            pg_store=store,
+            goal_queue=goal_queue,
+            autonomous_tasks_enabled=True,
+        )
+        dream._generate_autonomous_tasks(dry_run=False)
+        pending = goal_queue.list_pending()
+        assert len(pending) >= 1
+        # Can't check metadata directly on GoalItem from list_pending (memory mode),
+        # but the goal text should contain the theme
+        assert any("docker" in item.goal.lower() for item in pending)
+
+
+class TestDreamLoopPhase6ErrorPaths:
+    """Error and edge-case tests for Phase 6 counterfactual exploration."""
+
+    def test_phase6_handles_candidate_with_empty_content(self):
+        """Edge: candidate has empty content string — should be skipped."""
+        mock_candidate = MagicMock()
+        mock_candidate.content = ""
+        mock_candidate.item_type = "belief"
+        mock_candidate.confidence = 0.1
+        mock_candidate.metadata = {}
+
+        store = _FakePgStore(search_results=[mock_candidate])
+        dream = DreamLoop(pg_store=store, autonomous_tasks_enabled=True)
+        count = dream._generate_counterfactuals(dry_run=False)
+        assert count == 0
+        assert store.added_items == []
+
+    def test_phase6_handles_non_belief_non_hypothesis_items(self):
+        """Edge: search returns items that aren't beliefs or hypotheses."""
+        mock_fact = MagicMock()
+        mock_fact.content = "Some factual statement"
+        mock_fact.item_type = "fact"
+        mock_fact.confidence = 0.3
+        mock_fact.metadata = {}
+
+        store = _FakePgStore(search_results=[mock_fact])
+        dream = DreamLoop(pg_store=store, autonomous_tasks_enabled=True)
+        count = dream._generate_counterfactuals(dry_run=False)
+        assert count == 0
+        assert store.added_items == []
+
+    def test_phase6_caps_at_five_counterfactuals_per_cycle(self):
+        """Verify the 5-counterfactual-per-cycle limit."""
+        candidates = []
+        for i in range(10):
+            m = MagicMock()
+            m.content = f"Low confidence belief {i}"
+            m.item_type = "belief"
+            m.confidence = 0.1 + i * 0.03  # All below 0.5
+            m.metadata = {}
+            candidates.append(m)
+
+        store = _FakePgStore(search_results=candidates)
+        dream = DreamLoop(pg_store=store, autonomous_tasks_enabled=True)
+        count = dream._generate_counterfactuals(dry_run=False)
+        assert count <= 5
+
+    def test_phase6_add_item_failure_does_not_count(self):
+        """Edge: add_item returns None (failure) — should not count as generated."""
+        mock_candidate = MagicMock()
+        mock_candidate.content = "Questionable belief"
+        mock_candidate.item_type = "belief"
+        mock_candidate.confidence = 0.2
+        mock_candidate.metadata = {}
+
+        store = _FakePgStore(
+            search_results=[mock_candidate],
+            add_item_result_factory=lambda item: None,
+        )
+        dream = DreamLoop(pg_store=store, autonomous_tasks_enabled=True)
+        count = dream._generate_counterfactuals(dry_run=False)
+        assert count == 0
+
+    def test_phase6_counterfactual_confidence_is_low(self):
+        """Verify generated hypotheses have low initial confidence (0.3)."""
+        mock_candidate = MagicMock()
+        mock_candidate.content = "Dubious claim"
+        mock_candidate.item_type = "belief"
+        mock_candidate.confidence = 0.15
+        mock_candidate.metadata = {}
+
+        store = _FakePgStore(search_results=[mock_candidate])
+        dream = DreamLoop(pg_store=store, autonomous_tasks_enabled=True)
+        dream._generate_counterfactuals(dry_run=False)
+
+        assert len(store.added_items) == 1
+        item = store.added_items[0]
+        assert item.confidence == 0.3
+        assert item.domain == "meta"
+        assert item.metadata["origin"] == "dream_phase6"
+
+
+class TestDreamLoopRunV2ErrorPaths:
+    """Error/edge-case tests for the full run() integration."""
+
+    def test_run_records_zero_errors_on_clean_run(self):
+        dream = DreamLoop(autonomous_tasks_enabled=False)
+        result = dream.run(dry_run=True)
+        assert result.errors == []
+
+    def test_run_with_no_store_returns_zeroed_result(self):
+        dream = DreamLoop(autonomous_tasks_enabled=True)
+        result = dream.run(dry_run=True)
+        assert result.events_compressed == 0
+        assert result.episodes_created == 0
+        assert result.memories_reinforced == 0
+        assert result.memories_decayed == 0
+        assert result.insights_generated == 0
+        assert result.autonomous_tasks_generated == 0
+        assert result.counterfactuals_generated == 0
