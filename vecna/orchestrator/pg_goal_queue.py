@@ -357,7 +357,7 @@ class PgGoalQueue:
                         SELECT goal_id
                         FROM autonomy_goals
                         WHERE status = 'pending' AND scheduled_at <= NOW()
-                        ORDER BY priority DESC, scheduled_at ASC, created_at ASC
+                        ORDER BY priority ASC, scheduled_at ASC, created_at ASC
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                     )
@@ -460,7 +460,7 @@ class PgGoalQueue:
                            created_at, max_retries
                     FROM autonomy_goals
                     WHERE status = 'pending'
-                    ORDER BY priority DESC, created_at ASC;
+                    ORDER BY priority ASC, created_at ASC;
                     """
                 )
                 rows = cur.fetchall()

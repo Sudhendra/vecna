@@ -348,6 +348,25 @@ class TestCallAdapterWithTimeout:
         assert result is None
         assert breaker.failure_count == 1
 
+    async def test_unexpected_adapter_exception_records_failure(self):
+        """Adapter-specific SDK exceptions are isolated by the wrapper."""
+        config = HiveConfig()
+        loop = HiveLoop(config=config)
+
+        adapter = _make_adapter("sdk-adapter", weight=1.0)
+
+        class ProviderSDKError(Exception):
+            pass
+
+        async def bad_think(*args, **kwargs):
+            raise ProviderSDKError("provider exploded")
+
+        adapter.think = bad_think
+
+        result = await loop._call_adapter_with_timeout(adapter, "test prompt")
+        assert result is None
+        assert loop._circuit_breakers["sdk-adapter"].failure_count == 1
+
     async def test_breaker_is_created_on_first_call(self):
         """Adapter call path lazily creates a circuit breaker for that adapter."""
         config = HiveConfig()

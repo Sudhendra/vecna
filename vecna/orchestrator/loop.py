@@ -487,6 +487,8 @@ class HiveLoop:
             logger.warning("Adapter %s timed out after %.0fs", adapter.name, effective_timeout)
             breaker.record_failure()
             return None
+        except asyncio.CancelledError:
+            raise
         except (
             ConnectionError,
             RuntimeError,
@@ -497,6 +499,10 @@ class HiveLoop:
             OSError,
         ) as e:
             logger.error("Adapter %s failed: %s", adapter.name, e)
+            breaker.record_failure()
+            return None
+        except Exception as e:
+            logger.error("Adapter %s failed with unexpected exception: %s", adapter.name, e)
             breaker.record_failure()
             return None
 
