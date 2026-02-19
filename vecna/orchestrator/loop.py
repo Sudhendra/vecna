@@ -268,6 +268,9 @@ class HiveConfig:
     # Maximum cycles for a task (safety limit)
     max_cycles: int = 20
 
+    # Per-adapter timeout (seconds)
+    adapter_timeout: float = 60.0
+
     # Whether to use semantic memory
     use_semantic_memory: bool = True
 
@@ -455,40 +458,46 @@ class HiveLoop:
         self,
         adapter: BaseAdapter,
         task: str,
-        timeout: float = 60.0,
+        timeout: Optional[float] = None,
     ) -> Optional[tuple]:
         """
         Call adapter.think() with timeout and circuit breaker protection.
 
         Returns (response_text, HiveUpdate) on success, or None on failure/skip.
         """
-        breaker = self._circuit_breakers.get(adapter.name)
-        if breaker and breaker.is_open():
-            logger.info("Skipping %s — circuit breaker open", adapter.name)
+        breaker = self._circuit_breakers.setdefault(
+            adapter.name,
+            CircuitBreaker(adapter_name=adapter.name),
+        )
+
+        if breaker.is_open():
+            logger.warning("Skipping %s — circuit breaker cooldown active", adapter.name)
             return None
+
+        effective_timeout = timeout if timeout is not None else self.config.adapter_timeout
 
         try:
             result = await asyncio.wait_for(
                 adapter.think(self.state, task),
-                timeout=timeout,
+                timeout=effective_timeout,
             )
-            if breaker:
-                breaker.record_success()
+            breaker.record_success()
             return result
         except asyncio.TimeoutError:
-            logger.warning("Adapter %s timed out after %.0fs", adapter.name, timeout)
-            if breaker:
-                breaker.record_failure()
+            logger.warning("Adapter %s timed out after %.0fs", adapter.name, effective_timeout)
+            breaker.record_failure()
             return None
-        except ConnectionError as e:
-            logger.error("Adapter %s connection error: %s", adapter.name, e)
-            if breaker:
-                breaker.record_failure()
-            return None
-        except RuntimeError as e:
-            logger.error("Adapter %s runtime error: %s", adapter.name, e)
-            if breaker:
-                breaker.record_failure()
+        except (
+            ConnectionError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+        ) as e:
+            logger.error("Adapter %s failed: %s", adapter.name, e)
+            breaker.record_failure()
             return None
 
     def _rebuild_router(self) -> None:
@@ -1056,11 +1065,14 @@ class HiveLoop:
 
         # Run all models in parallel
         async def run_model(adapter: BaseAdapter) -> tuple[str, HiveUpdate]:
-            try:
-                return await adapter.think(self.state, task)
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as e:
-                logger.error(f"Model {adapter.name} failed: {e}")
+            result = await self._call_adapter_with_timeout(
+                adapter,
+                task,
+                timeout=self.config.adapter_timeout,
+            )
+            if result is None:
                 return "", HiveUpdate(source_model=adapter.name)
+            return result
 
         results = await asyncio.gather(*[run_model(a) for a in selected])
 

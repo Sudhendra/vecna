@@ -297,9 +297,26 @@ class HiveState:
         if fact.is_expired():
             return False
 
+        incoming_embedding = fact.embedding
+
         # Check for near-duplicate
         for existing in self.facts:
-            if self._is_similar(existing.content, fact.content):
+            existing_embedding = existing.embedding
+
+            if incoming_embedding is not None and existing_embedding is not None:
+                is_duplicate = self._is_similar(
+                    existing.content,
+                    fact.content,
+                    threshold=0.9,
+                    embedding_a=existing_embedding,
+                    embedding_b=incoming_embedding,
+                )
+            elif incoming_embedding is None and existing_embedding is None:
+                is_duplicate = self._is_similar(existing.content, fact.content)
+            else:
+                is_duplicate = False
+
+            if is_duplicate:
                 # Update confidence if higher
                 if fact.confidence > existing.confidence:
                     existing.confidence = fact.confidence

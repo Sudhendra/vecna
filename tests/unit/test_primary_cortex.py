@@ -347,3 +347,46 @@ class TestCallAdapterWithTimeout:
         result = await loop._call_adapter_with_timeout(adapter, "test prompt")
         assert result is None
         assert breaker.failure_count == 1
+
+    async def test_breaker_is_created_on_first_call(self):
+        """Adapter call path lazily creates a circuit breaker for that adapter."""
+        config = HiveConfig()
+        loop = HiveLoop(config=config)
+
+        adapter = _make_adapter("new-adapter", weight=1.0)
+        mock_update = MagicMock()
+
+        async def good_think(*args, **kwargs):
+            return ("ok", mock_update)
+
+        adapter.think = good_think
+
+        assert "new-adapter" not in loop._circuit_breakers
+        result = await loop._call_adapter_with_timeout(adapter, "test prompt")
+
+        assert result == ("ok", mock_update)
+        assert "new-adapter" in loop._circuit_breakers
+        assert loop._circuit_breakers["new-adapter"].failure_count == 0
+
+    async def test_run_cycle_uses_adapter_timeout_setting(self):
+        """_run_cycle enforces config.adapter_timeout through adapter call wrapper."""
+        import asyncio
+
+        config = HiveConfig(use_routing=False)
+        config.adapter_timeout = 0.01
+        loop = HiveLoop(config=config)
+
+        adapter = _make_adapter("slow-adapter", weight=1.0)
+
+        async def slow_think(*args, **kwargs):
+            await asyncio.sleep(0.1)
+            return ("late response", MagicMock())
+
+        adapter.think = slow_think
+        loop.adapters = [adapter]
+
+        response_map, updates = await loop._run_cycle("timeout check")
+
+        assert response_map == {}
+        assert updates[0].source_model == "slow-adapter"
+        assert loop._circuit_breakers["slow-adapter"].failure_count == 1
