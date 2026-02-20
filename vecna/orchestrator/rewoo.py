@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from vecna.adapters.base import BaseAdapter
 from vecna.core.hive_state import HiveState
 from vecna.observability.langfuse import trace_span
+from vecna.orchestrator.provider_errors import PROVIDER_API_ERRORS
 from vecna.tools.registry import ToolRegistry
 from vecna.tools.router import ToolRouter
 from vecna.tools.runtime import ToolRuntime
@@ -234,6 +235,14 @@ class RewooEngine:
             execution = await self.execute_plan(plan, context)
             answer = await self.synthesize_answer(task, execution)
             return RewooExecutionResult(answer=answer, execution=execution, used_rewoo=True)
+        except PROVIDER_API_ERRORS as exc:
+            logger.warning("ReWOO run failed with provider API error, falling back: %s", exc)
+            return RewooExecutionResult(
+                answer="",
+                execution=None,
+                used_rewoo=False,
+                fallback_reason=str(exc),
+            )
         except (
             asyncio.TimeoutError,
             ConnectionError,
