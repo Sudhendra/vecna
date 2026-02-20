@@ -16,7 +16,7 @@ from __future__ import annotations
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import Optional, List, Dict, Any, Callable, TYPE_CHECKING
 from pathlib import Path
 from datetime import datetime
 import json
@@ -29,6 +29,9 @@ if TYPE_CHECKING:
     from vecna.core.types import IdentityEvent
 
 logger = logging.getLogger("vecna.state_store")
+
+STATE_FILE_ERRORS = (OSError, IOError)
+STATE_JSON_ERRORS = (json.JSONDecodeError, TypeError, ValueError, KeyError)
 
 
 class StateStore(ABC):
@@ -174,6 +177,14 @@ class PostgresStore(StateStore):
                 self._schema_checked = True
         return self._conn
 
+    def _pg_errors(self):
+        """Return PostgreSQL operation errors."""
+        return (self._psycopg2.Error, OSError, TimeoutError, ConnectionError)
+
+    def _pg_json_errors(self):
+        """Return PostgreSQL plus JSON/data decoding errors."""
+        return self._pg_errors() + STATE_JSON_ERRORS
+
     def _table_exists(self, table_name: str) -> bool:
         """Check if a table exists in the database."""
         conn = self._get_connection()
@@ -191,7 +202,7 @@ class PostgresStore(StateStore):
                 )
                 row = cur.fetchone()
                 return row[0] if row else False
-        except Exception:
+        except self._pg_errors():
             return False
 
     def _ensure_schema(self) -> None:
@@ -213,7 +224,7 @@ class PostgresStore(StateStore):
         try:
             # Try to run Alembic migrations
             self._run_alembic_migrations()
-        except Exception as e:
+        except (ImportError, FileNotFoundError, OSError, ValueError) as e:
             logger.warning(f"Alembic migrations failed ({e}), falling back to basic schema")
             # Fall back to creating basic hive_state table
             self._ensure_table()
@@ -250,7 +261,7 @@ class PostgresStore(StateStore):
         except ImportError:
             logger.warning("Alembic not installed, cannot run migrations")
             raise
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logger.warning(f"Alembic migration error: {e}")
             raise
 
@@ -271,7 +282,7 @@ class PostgresStore(StateStore):
                 """)
             conn.commit()
             logger.info("Created basic hive_state table")
-        except Exception as e:
+        except self._pg_errors() as e:
             conn.rollback()
             logger.warning(f"Could not ensure table exists: {e}")
 
@@ -301,7 +312,7 @@ class PostgresStore(StateStore):
             logger.debug(f"State saved to PostgreSQL with key '{key}'")
             return True
 
-        except Exception as e:
+        except self._pg_json_errors() as e:
             conn.rollback()
             logger.error(f"Failed to save state to PostgreSQL: {e}")
             return False
@@ -332,7 +343,7 @@ class PostgresStore(StateStore):
             # Reconstruct HiveState from dict
             return self._dict_to_hive_state(state_data)
 
-        except Exception as e:
+        except self._pg_json_errors() as e:
             logger.error(f"Failed to load state from PostgreSQL: {e}")
             return None
 
@@ -396,7 +407,7 @@ class PostgresStore(StateStore):
                     (key,),
                 )
                 return cur.fetchone() is not None
-        except Exception as e:
+        except self._pg_errors() as e:
             logger.error(f"Failed to check existence in PostgreSQL: {e}")
             return False
 
@@ -414,7 +425,7 @@ class PostgresStore(StateStore):
             conn.commit()
             logger.debug(f"Deleted state with key '{key}' from PostgreSQL")
             return True
-        except Exception as e:
+        except self._pg_errors() as e:
             conn.rollback()
             logger.error(f"Failed to delete state from PostgreSQL: {e}")
             return False
@@ -429,7 +440,7 @@ class PostgresStore(StateStore):
                 """)
                 rows = cur.fetchall()
             return [row[0] for row in rows]
-        except Exception as e:
+        except self._pg_errors() as e:
             logger.error(f"Failed to list keys from PostgreSQL: {e}")
             return []
 
@@ -472,7 +483,7 @@ class PostgresStore(StateStore):
                 "coherence": row[8],
                 "backend": "postgres",
             }
-        except Exception as e:
+        except self._pg_errors() as e:
             logger.error(f"Failed to get metadata from PostgreSQL: {e}")
             return None
 
@@ -552,7 +563,7 @@ class OfflineSpoolStore(StateStore):
             logger.warning(f"State spooled offline for key '{key}' - PG unreachable")
             return True
 
-        except Exception as e:
+        except STATE_FILE_ERRORS + STATE_JSON_ERRORS as e:
             logger.error(f"Failed to spool state offline: {e}")
             return False
 
@@ -616,7 +627,7 @@ class OfflineSpoolStore(StateStore):
 
             return state
 
-        except Exception as e:
+        except STATE_FILE_ERRORS + STATE_JSON_ERRORS as e:
             logger.error(f"Failed to load offline state: {e}")
             return None
 
@@ -636,7 +647,7 @@ class OfflineSpoolStore(StateStore):
                 spool_file.unlink()
 
             return True
-        except Exception as e:
+        except STATE_FILE_ERRORS as e:
             logger.error(f"Failed to delete offline spool: {e}")
             return False
 
@@ -658,7 +669,7 @@ class OfflineSpoolStore(StateStore):
             try:
                 with open(f, "r") as fp:
                     count += sum(1 for _ in fp)
-            except Exception:
+            except STATE_FILE_ERRORS:
                 pass
         return count
 
@@ -683,7 +694,7 @@ class OfflineSpoolStore(StateStore):
                     self.delete(key)
                 else:
                     results["failed"] += 1
-            except Exception as e:
+            except (OSError, TimeoutError, ConnectionError, ValueError) as e:
                 logger.error(f"Failed to flush key '{key}': {e}")
                 results["failed"] += 1
 
@@ -754,7 +765,7 @@ def get_default_store() -> StateStore:
             try:
                 _default_store = PostgresStore(connection_string=pg_url)
                 logger.info("Default store: PostgreSQL")
-            except Exception as e:
+            except (ImportError, ValueError, OSError, TimeoutError, ConnectionError) as e:
                 logger.warning(f"PostgreSQL unavailable ({e}), using offline spool")
                 _default_store = OfflineSpoolStore()
         else:
@@ -806,6 +817,8 @@ class PgStateManager:
         pg_url: Optional[str] = None,
         redis_url: Optional[str] = None,
         auto_sync_memory: bool = False,
+        embedder: Optional[Callable[[List[str]], Any]] = None,
+        embedding_dim: int = 1536,
     ):
         """
         Initialize the PgStateManager.
@@ -818,6 +831,8 @@ class PgStateManager:
         self.pg_url = pg_url or os.environ.get("VECNA_PG_URL")
         self.redis_url = redis_url or os.environ.get("VECNA_REDIS_URL")
         self.auto_sync_memory = auto_sync_memory
+        self._memory_embedder = embedder
+        self._memory_embedding_dim = embedding_dim
 
         # Initialize stores lazily
         self._pg_store: Optional[PostgresStore] = None
@@ -832,6 +847,29 @@ class PgStateManager:
         self._last_redis_check: Optional[datetime] = None
 
         logger.info("PgStateManager initialized")
+
+    def _pg_errors(self):
+        """Return PostgreSQL-related exception types."""
+        psycopg_error = None
+        if self._pg_store is not None:
+            psycopg_error = getattr(getattr(self._pg_store, "_psycopg2", None), "Error", None)
+
+        base_errors = (OSError, TimeoutError, ConnectionError, ValueError)
+        if psycopg_error is not None:
+            return (psycopg_error,) + base_errors
+        return base_errors
+
+    def _redis_errors(self):
+        """Return Redis-related exception types with optional dependency safety."""
+        redis_module = None
+        if self._redis_cache is not None:
+            redis_module = getattr(self._redis_cache, "_redis_module", None)
+        redis_error = getattr(redis_module, "RedisError", None) if redis_module else None
+
+        base_errors = (OSError, TimeoutError, ConnectionError, ValueError)
+        if redis_error is not None:
+            return (redis_error,) + base_errors
+        return base_errors
 
     def _check_pg_available(self, force: bool = False) -> bool:
         """Check if PostgreSQL is available, with caching."""
@@ -857,7 +895,7 @@ class PgStateManager:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
             self._pg_available = True
-        except Exception as e:
+        except self._pg_errors() as e:
             logger.warning(f"PostgreSQL unavailable: {e}")
             self._pg_available = False
 
@@ -888,14 +926,16 @@ class PgStateManager:
                 redis_cache = self._get_redis_cache() if self._check_redis_available() else None
                 self._memory_store = PgMemoryStore(
                     connection_string=self.pg_url,
+                    embedding_dim=self._memory_embedding_dim,
                     redis_cache=redis_cache,
+                    embedder=self._memory_embedder,
                 )
                 if redis_cache:
                     logger.debug("PgMemoryStore initialized with Redis embedding cache")
             except ImportError:
                 logger.warning("PgMemoryStore not available")
                 return None
-            except Exception as e:
+            except (ValueError, OSError, TimeoutError, ConnectionError) as e:
                 logger.warning(f"Failed to initialize PgMemoryStore: {e}")
                 return None
         return self._memory_store
@@ -923,7 +963,7 @@ class PgStateManager:
                 self._redis_available = True
             else:
                 self._redis_available = False
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.debug(f"Redis unavailable: {e}")
             self._redis_available = False
 
@@ -943,10 +983,55 @@ class PgStateManager:
             except ImportError:
                 logger.debug("RedisHotCache not available (redis package missing)")
                 return None
-            except Exception as e:
+            except self._redis_errors() as e:
                 logger.debug(f"Failed to initialize RedisHotCache: {e}")
                 return None
         return self._redis_cache
+
+    def is_postgres_available(self, force: bool = False) -> bool:
+        """Public availability check for PostgreSQL connectivity."""
+        return self._check_pg_available(force=force)
+
+    def is_redis_available(self, force: bool = False) -> bool:
+        """Public availability check for Redis connectivity."""
+        return self._check_redis_available(force=force)
+
+    def is_postgres_store_initialized(self) -> bool:
+        """Return True when the PostgreSQL store has been initialized."""
+        return self._pg_store is not None
+
+    def is_memory_store_initialized(self) -> bool:
+        """Return True when the memory store has been initialized."""
+        return self._memory_store is not None
+
+    def delete_state(self, key: str = "default") -> bool:
+        """Delete state from PostgreSQL/offline spool for the given key."""
+        deleted = False
+
+        if self._check_pg_available():
+            try:
+                deleted = self._get_pg_store().delete(key)
+            except self._pg_errors() as e:
+                logger.warning(f"Failed to delete state from PostgreSQL: {e}")
+                self._pg_available = False
+
+        spool = self._get_offline_spool()
+        if spool.exists(key):
+            deleted = spool.delete(key) or deleted
+
+        return deleted
+
+    def get_state_metadata(self, key: str = "default") -> Optional[Dict[str, Any]]:
+        """Get PostgreSQL metadata for a state key, when available."""
+        if not self._check_pg_available():
+            return None
+
+        try:
+            return self._get_pg_store().get_metadata(key)
+        except self._pg_errors() as e:
+            logger.warning(f"Failed to get state metadata from PostgreSQL: {e}")
+            self._pg_available = False
+            return None
 
     # ============================================================
     # REDIS CACHING OPERATIONS
@@ -968,7 +1053,7 @@ class PgStateManager:
         try:
             cache = self._get_redis_cache()
             return cache.get_embedding(content) if cache else None
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.debug(f"Redis embedding cache miss: {e}")
             return None
 
@@ -989,7 +1074,7 @@ class PgStateManager:
         try:
             cache = self._get_redis_cache()
             return cache.set_embedding(content, embedding) if cache else False
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.debug(f"Redis embedding cache write failed: {e}")
             return False
 
@@ -1009,7 +1094,7 @@ class PgStateManager:
         try:
             cache = self._get_redis_cache()
             return cache.get_cached_retrieval(query) if cache else None
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.debug(f"Redis retrieval cache miss: {e}")
             return None
 
@@ -1031,7 +1116,7 @@ class PgStateManager:
         try:
             cache = self._get_redis_cache()
             return cache.set_cached_retrieval(query, result, ttl=ttl) if cache else False
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.debug(f"Redis retrieval cache write failed: {e}")
             return False
 
@@ -1068,7 +1153,7 @@ class PgStateManager:
                 created_at=datetime.now().isoformat(),
             )
             return cache.push_event(event)
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.debug(f"Redis event push failed: {e}")
             return False
 
@@ -1080,7 +1165,7 @@ class PgStateManager:
         try:
             cache = self._get_redis_cache()
             return cache.get_stats() if cache else {"connected": False}
-        except Exception as e:
+        except self._redis_errors() as e:
             return {"connected": False, "error": str(e)}
 
     # ============================================================
@@ -1107,7 +1192,7 @@ class PgStateManager:
                 if state is not None:
                     logger.debug(f"Loaded state from PostgreSQL: key={key}")
                     return state
-            except Exception as e:
+            except self._pg_errors() as e:
                 logger.warning(f"Failed to load from PostgreSQL: {e}")
                 self._pg_available = False
 
@@ -1143,7 +1228,7 @@ class PgStateManager:
 
                     # Try to flush any pending offline entries
                     self._flush_offline_if_pending()
-            except Exception as e:
+            except self._pg_errors() as e:
                 logger.warning(f"Failed to save to PostgreSQL: {e}")
                 self._pg_available = False
 
@@ -1158,7 +1243,7 @@ class PgStateManager:
         if self.auto_sync_memory and self._pg_available:
             try:
                 self.sync_memory_from_state(state)
-            except Exception as e:
+            except (ValueError, AttributeError, OSError, TimeoutError, ConnectionError) as e:
                 logger.warning(f"Failed to sync memory: {e}")
 
         return saved
@@ -1176,7 +1261,7 @@ class PgStateManager:
                     logger.info(f"Flushed {results['flushed']} entries to PostgreSQL")
                 if results["failed"] > 0:
                     logger.warning(f"Failed to flush {results['failed']} entries")
-            except Exception as e:
+            except self._pg_errors() as e:
                 logger.warning(f"Flush failed: {e}")
 
     def flush_offline_spool(self) -> Dict[str, Any]:
@@ -1219,7 +1304,7 @@ class PgStateManager:
         except AttributeError:
             logger.warning("PgMemoryStore.add_from_state() not available")
             return {}
-        except Exception as e:
+        except (AttributeError, ValueError, OSError, TimeoutError, ConnectionError) as e:
             logger.error(f"Failed to sync memory from state: {e}")
             return {}
 
@@ -1281,12 +1366,12 @@ class PgStateManager:
             logger.debug(f"Persisted identity event: id={event_id}, trigger={event.trigger}")
             return True
 
-        except Exception as e:
+        except self._pg_errors() + STATE_JSON_ERRORS as e:
             logger.error(f"Failed to persist identity event: {e}")
             if store is not None:
                 try:
                     store._get_connection().rollback()
-                except Exception:
+                except self._pg_errors():
                     pass
             return False
 
@@ -1356,7 +1441,7 @@ class PgStateManager:
 
             return events
 
-        except Exception as e:
+        except self._pg_errors() + STATE_JSON_ERRORS as e:
             logger.error(f"Failed to get identity timeline: {e}")
             return []
 
@@ -1385,14 +1470,14 @@ class PgStateManager:
         try:
             spool = self._get_offline_spool()
             status["offline_pending_count"] = spool.get_pending_count()
-        except Exception:
+        except (OSError, ValueError):
             pass
 
         # Check memory store
         try:
             memory_store = self._get_memory_store()
             status["memory_store_available"] = memory_store is not None
-        except Exception:
+        except (ImportError, OSError, ValueError, TimeoutError, ConnectionError):
             pass
 
         # Check Redis cache stats
@@ -1400,7 +1485,7 @@ class PgStateManager:
             try:
                 redis_stats = self.get_redis_stats()
                 status["redis_stats"] = redis_stats
-            except Exception:
+            except self._redis_errors():
                 pass
 
         # Add masked PG URL for display
@@ -1428,14 +1513,14 @@ class PgStateManager:
         if self._memory_store is not None:
             try:
                 self._memory_store.close()
-            except Exception:
+            except (AttributeError, OSError, ValueError):
                 pass
             self._memory_store = None
 
         if self._redis_cache is not None:
             try:
                 self._redis_cache.close()
-            except Exception:
+            except self._redis_errors():
                 pass
             self._redis_cache = None
 

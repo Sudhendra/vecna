@@ -57,7 +57,8 @@ engine reconciles conflicting perspectives into coherent responses.
 
 The central shared state object. Contains versioned collections of `Fact`, `Belief`,
 `Hypothesis`, and `Goal` objects. Every adapter read/write goes through HiveState, which
-provides deduplication via Jaccard similarity and version tracking.
+provides version tracking and similarity-based deduplication. Cosine similarity on embeddings
+is primary when embeddings are available; Jaccard word overlap is a text-only fallback.
 
 Key methods: `add_fact()`, `add_belief()`, `apply_update()`, `to_prompt_context()`,
 `to_full_dict()`, `export_to_file()`, `import_from_file()`.
@@ -80,6 +81,11 @@ Concrete adapters:
 When multiple adapters produce conflicting facts or beliefs, the consensus engine resolves
 disagreements. It uses confidence-weighted voting: facts with higher confidence from more
 adapters win. The consensus threshold is configurable via `HiveConfig.consensus_threshold`.
+
+Similarity resolution hierarchy:
+- **pgvector cosine (database):** preferred for persisted warm-memory retrieval and ranking.
+- **In-memory cosine (embeddings present):** used when vectors are available in-process.
+- **Jaccard overlap (text fallback):** used only when embeddings are unavailable.
 
 ### DreamLoop (`vecna/memory/dream_loop.py`)
 
@@ -104,7 +110,8 @@ Three-tier memory architecture:
 
 1. **User sends message** via CLI (`vecna chat`), HTTP POST `/api/chat`, or WebSocket.
 2. **HiveLoop receives input** and builds a prompt including HiveState context and HumanModel.
-3. **Adapters generate responses** — one or more LLMs produce `<HIVE_UPDATE>` YAML blocks.
+3. **Adapters generate responses** — one or more LLMs return native tool-calling payloads
+   (`hive_update`) when supported; legacy `<HIVE_UPDATE>` YAML is fallback-only.
 4. **Parser extracts** `Fact`, `Belief`, `Hypothesis` objects and response text.
 5. **ConsensusEngine reconciles** outputs if multiple adapters contributed.
 6. **HiveState updates** with new entries; version increments.

@@ -355,11 +355,19 @@ class TestCallAdapterWithTimeout:
 
         adapter = _make_adapter("sdk-adapter", weight=1.0)
 
-        class ProviderSDKError(Exception):
-            pass
+        from openai import RateLimitError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        provider_error = RateLimitError(
+            message="Rate limit exceeded",
+            response=mock_response,
+            body={"error": {"message": "Rate limit exceeded"}},
+        )
 
         async def bad_think(*args, **kwargs):
-            raise ProviderSDKError("provider exploded")
+            raise provider_error
 
         adapter.think = bad_think
 

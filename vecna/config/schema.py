@@ -210,6 +210,7 @@ class ModelEntry:
     max_tokens: int = 4096  # Max output tokens
     persona_override: Optional[str] = None  # Override default persona for this model
     enabled: bool = True  # Whether to include in hive
+    allow_yaml_fallback: bool = True  # Legacy BaseAdapter YAML parsing fallback
 
     # Provider-specific settings
     api_key_env: Optional[str] = None  # Env var name for API key (e.g., "OPENAI_API_KEY")
@@ -229,6 +230,7 @@ class ModelEntry:
             "max_tokens": self.max_tokens,
             "persona_override": self.persona_override,
             "enabled": self.enabled,
+            "allow_yaml_fallback": self.allow_yaml_fallback,
             "api_key_env": self.api_key_env,
             "base_url": self.base_url,
             "extra_params": self.extra_params,
@@ -253,6 +255,7 @@ class ModelEntry:
             max_tokens=data.get("max_tokens", 4096),
             persona_override=data.get("persona_override"),
             enabled=data.get("enabled", True),
+            allow_yaml_fallback=data.get("allow_yaml_fallback", True),
             api_key_env=data.get("api_key_env"),
             base_url=data.get("base_url"),
             extra_params=data.get("extra_params", {}),

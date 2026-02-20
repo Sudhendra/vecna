@@ -195,7 +195,7 @@ class RLMBridge:
                 logger.error(f"Failed to prewarm RLM container: {stderr.decode()}")
                 return False
 
-        except Exception as e:
+        except (OSError, asyncio.SubprocessError, UnicodeDecodeError, ValueError) as e:
             logger.error(f"Error prewarming RLM container: {e}")
             return False
 
@@ -230,7 +230,7 @@ class RLMBridge:
 
         except asyncio.TimeoutError:
             return "", "Execution timed out", -1
-        except Exception as e:
+        except (OSError, asyncio.SubprocessError, ValueError) as e:
             return "", str(e), -1
 
     async def install_packages(self, packages: List[str]) -> Tuple[bool, str]:
@@ -291,7 +291,7 @@ class RLMBridge:
 
         except asyncio.TimeoutError:
             return False, "Package installation timed out (120s limit)"
-        except Exception as e:
+        except (OSError, asyncio.SubprocessError, ValueError) as e:
             return False, str(e)
 
     async def recursive_query(
@@ -420,7 +420,7 @@ try:
                 "score": 0.5,  # Simple match score
                 "confidence": confidence or 0.5
             }})
-    except Exception:
+    except psycopg2.Error:
         pass  # Table might not exist
     
     # Sort by score and take top 10
@@ -432,7 +432,7 @@ try:
     
     print(json.dumps({{"query": query, "results": results, "success": True}}))
     
-except Exception as e:
+except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
     print(json.dumps({{"error": str(e)}}))
 '''
 
@@ -504,7 +504,7 @@ except Exception as e:
                     timeout=10,
                 )
                 logger.info(f"RLM container stopped: {self._container_id[:12]}")
-            except Exception as e:
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
                 logger.error(f"Error stopping RLM container: {e}")
             finally:
                 self._container_id = None
@@ -552,11 +552,11 @@ except Exception as e:
         try:
             process.terminate()
             await asyncio.wait_for(process.wait(), timeout=2)
-        except Exception:
+        except (ProcessLookupError, RuntimeError, asyncio.TimeoutError, OSError):
             try:
                 process.kill()
                 await process.wait()
-            except Exception:
+            except (ProcessLookupError, RuntimeError, OSError):
                 pass
 
     def __del__(self):
@@ -568,7 +568,7 @@ except Exception as e:
                     capture_output=True,
                     timeout=5,
                 )
-            except Exception:
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
                 pass
 
 

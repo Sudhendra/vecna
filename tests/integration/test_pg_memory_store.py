@@ -45,8 +45,7 @@ class TestMemoryItemCRUD:
 
         item_id = pg_memory_store.add_item(item)
 
-        assert item_id is not None
-        assert len(item_id) > 0
+        assert uuid.UUID(item_id).version == 4
 
     def test_add_and_get_item(self, pg_memory_store: PgMemoryStore):
         """Test adding and retrieving an item."""
@@ -348,15 +347,14 @@ class TestSemanticSearch:
 
         # Get initial retrieval count
         initial = pg_memory_store.get_item(item_ids[0])
+        assert initial is not None
 
         # Perform search that should return this item
-        assert initial is not None
-        pg_memory_store.search(initial.content[:50], top_k=5)
+        pg_memory_store.search(initial.content, top_k=1, domain="code")
 
         # Check if count increased
-        _ = pg_memory_store.get_item(item_ids[0])
-        # Note: count may not increase if item not in top results
-        # This is expected behavior
+        updated = pg_memory_store.get_item(item_ids[0])
+        assert updated.retrieval_count >= initial.retrieval_count + 1
 
 
 # ============================================================
@@ -414,7 +412,7 @@ class TestMemoryEdges:
         )
 
         edge_id = pg_memory_store.add_edge(edge)
-        assert edge_id is not None
+        assert uuid.UUID(edge_id).version == 4
 
     def test_get_outgoing_edges(self, pg_memory_store: PgMemoryStore, edge_test_items):
         """Test getting outgoing edges from an item."""
@@ -587,7 +585,7 @@ class TestEpisodicEvents:
         )
 
         event_id = pg_memory_store.add_event(event)
-        assert event_id is not None
+        assert uuid.UUID(event_id).version == 4
 
     def test_get_recent_events(self, pg_memory_store: PgMemoryStore):
         """Test retrieving recent events."""
@@ -652,7 +650,7 @@ class TestEpisodes:
         )
 
         episode_id = pg_memory_store.add_episode(episode)
-        assert episode_id is not None
+        assert uuid.UUID(episode_id).version == 4
 
     def test_search_episodes(self, pg_memory_store: PgMemoryStore):
         """Test searching episodes semantically."""

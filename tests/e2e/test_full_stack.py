@@ -143,8 +143,8 @@ class TestCLIToHiveLoop:
             name="e2e-empty-input",
         )
         result = await loop.think("   ")
-        # Should still get some response (mock adapter always returns)
-        assert isinstance(result, str)
+        # Should still get deterministic mock response content
+        assert "analyzed the topic" in result
 
     async def test_think_with_empty_adapter_response(self):
         """HiveLoop.think handles adapter returning empty string."""
@@ -157,7 +157,7 @@ class TestCLIToHiveLoop:
         )
         result = await loop.think("hello")
         # Should return empty string, not raise
-        assert isinstance(result, str)
+        assert result == ""
 
 
 # ============================================================
@@ -517,9 +517,16 @@ class TestConfigBootstrap:
     def test_default_config_has_expected_providers(self):
         """Default models use correct Provider enum values."""
         config = create_default_config()
-        # All default models should be Copilot provider
-        for model_entry in config.models.values():
-            assert isinstance(model_entry.provider, Provider)
+        # All enabled default models should be Copilot provider
+        enabled_models = [m for m in config.models.values() if m.enabled]
+        assert len(enabled_models) >= 1
+        for model_entry in enabled_models:
+            assert model_entry.provider == Provider.COPILOT
+
+        # Optional Groq model remains explicitly GROQ and disabled by default
+        groq_model = config.models["groq-llama"]
+        assert groq_model.provider == Provider.GROQ
+        assert groq_model.enabled is False
 
     def test_default_config_has_memory_config(self):
         """Default config includes MemoryConfig with sane defaults."""

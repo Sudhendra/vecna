@@ -527,7 +527,7 @@ class TestHotMemoryManager:
             persist=True,
         )
 
-        assert event_id is not None
+        assert uuid.UUID(event_id).version == 4
 
     def test_push_event_without_persist(self, hot_memory_manager: HotMemoryManager):
         """Test pushing event to cache only."""
@@ -539,7 +539,7 @@ class TestHotMemoryManager:
         )
 
         # Event ID is generated even without persistence
-        assert event_id is not None
+        assert uuid.UUID(event_id).version == 4
 
     def test_get_embedding_cached(self, hot_memory_manager: HotMemoryManager):
         """Test getting embedding with caching."""

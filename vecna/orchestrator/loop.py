@@ -29,6 +29,7 @@ from vecna.memory.flush import FlushManager, estimate_token_count, should_flush
 from vecna.memory.mirror import MemoryMirror
 from vecna.memory.session import SessionManager
 from vecna.orchestrator.consensus import ConsensusEngine, ConsensusConfig, DomainRouter
+from vecna.orchestrator.provider_errors import PROVIDER_API_ERRORS
 from vecna.orchestrator.rewoo import RewooEngine, RewooEngineConfig, RewooExecutionResult
 from vecna.orchestrator.self_reflection import reflect, get_identity_context_for_prompt
 from vecna.tools.code_executor import execute_and_inject
@@ -489,6 +490,10 @@ class HiveLoop:
             return None
         except asyncio.CancelledError:
             raise
+        except PROVIDER_API_ERRORS as e:
+            logger.error("Adapter %s provider API error: %s", adapter.name, e)
+            breaker.record_failure()
+            return None
         except (
             ConnectionError,
             RuntimeError,
@@ -501,7 +506,15 @@ class HiveLoop:
             logger.error("Adapter %s failed: %s", adapter.name, e)
             breaker.record_failure()
             return None
-        except Exception as e:
+        except (
+            LookupError,
+            AssertionError,
+            ImportError,
+            MemoryError,
+            SystemError,
+            ArithmeticError,
+            EOFError,
+        ) as e:
             logger.error("Adapter %s failed with unexpected exception: %s", adapter.name, e)
             breaker.record_failure()
             return None
@@ -935,6 +948,10 @@ class HiveLoop:
     def get_session_manager(self) -> Optional[SessionManager]:
         """Return the active SessionManager, if initialized."""
         return self._session_manager
+
+    def set_session_manager(self, session_manager: Optional[SessionManager]) -> None:
+        """Set or clear the active SessionManager instance."""
+        self._session_manager = session_manager
 
     def initialize_session_manager(self) -> None:
         if self._session_manager is None:

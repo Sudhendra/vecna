@@ -292,7 +292,13 @@ class HiveState:
         return result
 
     def add_fact(self, fact: Fact) -> bool:
-        """Add a fact, checking for duplicates, contradictions, and expiry."""
+        """Add a fact with expiry filtering and similarity-aware deduplication.
+
+        Similarity hierarchy in Vecna is:
+        1) pgvector cosine (database tier, when persisted retrieval is available),
+        2) in-memory cosine (used here when both facts carry embeddings),
+        3) Jaccard overlap (text-only fallback when embeddings are unavailable).
+        """
         # Skip expired facts
         if fact.is_expired():
             return False

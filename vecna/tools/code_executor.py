@@ -28,6 +28,9 @@ from vecna.tools.types import ToolExecutionContext, ToolResult
 
 logger = logging.getLogger("vecna.code_executor")
 
+CODE_EXECUTION_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+CODE_EXECUTION_LOG_ERRORS = (OSError, ValueError, TypeError)
+
 # Execution log stored in ~/.vecna/
 EXECUTION_LOG_PATH = Path.home() / ".vecna" / "execution_log.jsonl"
 
@@ -501,7 +504,7 @@ async def execute_code_block(code: str, timeout: int = 60) -> ExecutionResult:
             execution_time_ms=0,
             success=False,
         )
-    except Exception as e:
+    except CODE_EXECUTION_ERRORS as e:
         execution_time = (datetime.now() - start_time).total_seconds() * 1000
         return ExecutionResult(
             code=code,
@@ -527,7 +530,7 @@ def _log_execution(result: ExecutionResult) -> None:
             f"Code executed: {result.return_code == 0}, time={result.execution_time_ms:.1f}ms"
         )
 
-    except Exception as e:
+    except CODE_EXECUTION_LOG_ERRORS as e:
         logger.warning(f"Failed to log execution: {e}")
 
 
@@ -628,7 +631,7 @@ def get_execution_log(limit: int = 20) -> List[dict]:
             for line in f:
                 if line.strip():
                     entries.append(json.loads(line))
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         logger.warning(f"Failed to read execution log: {e}")
         return []
 
@@ -642,6 +645,6 @@ def clear_execution_log() -> bool:
         if EXECUTION_LOG_PATH.exists():
             EXECUTION_LOG_PATH.unlink()
         return True
-    except Exception as e:
+    except OSError as e:
         logger.warning(f"Failed to clear execution log: {e}")
         return False

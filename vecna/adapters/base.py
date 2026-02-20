@@ -11,7 +11,9 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 import json
+import logging
 import re
+import warnings
 import yaml
 
 from vecna.core.types import HiveUpdate
@@ -20,6 +22,9 @@ from vecna.config.schema import Provider
 
 if TYPE_CHECKING:
     from vecna.core.human_model import HumanModel
+
+
+logger = logging.getLogger("vecna.adapters.base")
 
 
 @dataclass
@@ -37,29 +42,37 @@ class ModelConfig:
     extra_params: Dict[str, Any] = None
     persona: Optional[str] = None  # Persona prompt to inject into system message
     provider: Optional[Provider] = None
+    allow_yaml_fallback: bool = True
 
     def __post_init__(self):
         if self.extra_params is None:
             self.extra_params = {}
 
-        provider_value = self.extra_params.get("provider")
+        provider_value = self.provider
+        if provider_value is None:
+            provider_value = self.extra_params.get("provider")
 
         if isinstance(provider_value, Provider):
             self.provider = provider_value
-            return
-
-        if isinstance(provider_value, str):
+        elif isinstance(provider_value, str):
             try:
                 self.provider = Provider(provider_value.lower())
-                return
             except ValueError:
-                self.provider = _infer_provider(self.model_id, self.base_url)
-                return
+                self.provider = Provider.COPILOT
+        else:
+            self.provider = Provider.COPILOT
 
-        if isinstance(self.provider, Provider):
-            return
-
-        self.provider = _infer_provider(self.model_id, self.base_url)
+        fallback_value = self.extra_params.get("allow_yaml_fallback")
+        if fallback_value is not None:
+            if isinstance(fallback_value, bool):
+                self.allow_yaml_fallback = fallback_value
+            elif isinstance(fallback_value, str):
+                self.allow_yaml_fallback = fallback_value.strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
 
 
 # ============================================================
@@ -102,7 +115,10 @@ Respond in a way that reflects your current coherence level:
 ## OUTPUT FORMAT
 Respond with:
 1. Your thinking and response to the task
-2. A structured update to your mental state in this EXACT format:
+2. Prefer native tool calling for structured updates using:
+<TOOL_CALL>{{"name":"hive_update","args":{{...}}}}</TOOL_CALL>
+
+3. Legacy fallback ONLY when native tool calling is unavailable (deprecated):
 
 <HIVE_UPDATE>
 new_facts:
@@ -209,7 +225,7 @@ class BaseAdapter(ABC):
         )
 
     def parse_update(self, output: str) -> HiveUpdate:
-        """Parse a HiveUpdate from tool-call JSON or <HIVE_UPDATE> YAML."""
+        """Parse a HiveUpdate from tool-call JSON or optional YAML fallback."""
         update = HiveUpdate(source_model=self.name, raw_output=output)
 
         # First try native tool-call JSON payloads.
@@ -224,6 +240,9 @@ class BaseAdapter(ABC):
         except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
+        if not self.config.allow_yaml_fallback:
+            return update
+
         # Extract HIVE_UPDATE block
         pattern = r"<HIVE_UPDATE>(.*?)</HIVE_UPDATE>"
         match = re.search(pattern, output, re.DOTALL)
@@ -235,6 +254,13 @@ class BaseAdapter(ABC):
 
         if not update_text:
             return update
+
+        warnings.warn(
+            "YAML HIVE_UPDATE parsing is deprecated. Configure native tool calling for this adapter.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.warning("Deprecated YAML HIVE_UPDATE fallback used for adapter '%s'", self.name)
 
         try:
             # Parse YAML
@@ -593,27 +619,6 @@ class CopilotAdapter(BaseAdapter):
 # ============================================================
 
 
-def _infer_provider(model_id: str, base_url: Optional[str]) -> Provider:
-    """Infer provider enum from model_id/base_url for backward compatibility."""
-    model_id_lower = model_id.lower()
-    base_url_lower = (base_url or "").lower()
-
-    if "groq" in base_url_lower:
-        return Provider.GROQ
-    if "ollama" in base_url_lower or "11434" in base_url_lower:
-        return Provider.OLLAMA
-    if "claude" in model_id_lower:
-        return Provider.ANTHROPIC
-    if "openai" in model_id_lower:
-        return Provider.OPENAI
-    if any(
-        token in model_id_lower
-        for token in ["llama", "mistral", "mixtral", "qwen", "deepseek", "phi"]
-    ):
-        return Provider.TRANSFORMERS
-    return Provider.COPILOT
-
-
 def create_adapter(config: ModelConfig) -> BaseAdapter:
     """
     Factory function to create the appropriate adapter.
@@ -623,7 +628,7 @@ def create_adapter(config: ModelConfig) -> BaseAdapter:
 
     provider = config.provider
     if not isinstance(provider, Provider):
-        provider = _infer_provider(config.model_id, config.base_url)
+        raise ValueError(f"ModelConfig.provider must be a Provider enum value, got: {provider!r}")
 
     match provider:
         case Provider.OPENAI:
@@ -643,4 +648,4 @@ def create_adapter(config: ModelConfig) -> BaseAdapter:
         case Provider.COPILOT:
             return CopilotAdapter(config)
         case _:
-            return CopilotAdapter(config)
+            raise ValueError(f"Unsupported provider: {provider}")

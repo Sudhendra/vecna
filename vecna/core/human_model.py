@@ -107,13 +107,9 @@ class CommunicationStyle(SerializableMixin):
 
     def to_dict(self) -> Dict[str, Any]:
         """Override to exclude the internal signal map."""
-        return {
-            "verbosity": self.verbosity,
-            "formality": self.formality,
-            "technical_depth": self.technical_depth,
-            "emoji_usage": self.emoji_usage,
-            "humor": self.humor,
-        }
+        result = super().to_dict()
+        result.pop("_SIGNAL_MAP", None)
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CommunicationStyle":
@@ -190,7 +186,7 @@ class EmotionalContext(SerializableMixin):
 
 
 @dataclass
-class HumanModel:
+class HumanModel(SerializableMixin):
     """
     The user profile that Vecna builds over time.
 
@@ -324,17 +320,12 @@ class HumanModel:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize HumanModel to dict."""
-        return {
-            "id": self.id,
-            "name": self.name,
-            "preferences": [p.to_dict() for p in self.preferences],
-            "communication_style": self.communication_style.to_dict(),
-            "emotional_context": self.emotional_context.to_dict(),
-            "interaction_patterns": [p.to_dict() for p in self.interaction_patterns[-100:]],
-            "interaction_count": self.interaction_count,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-        }
+        result = super().to_dict()
+        result["preferences"] = [p.to_dict() for p in self.preferences]
+        result["communication_style"] = self.communication_style.to_dict()
+        result["emotional_context"] = self.emotional_context.to_dict()
+        result["interaction_patterns"] = [p.to_dict() for p in self.interaction_patterns[-100:]]
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HumanModel":

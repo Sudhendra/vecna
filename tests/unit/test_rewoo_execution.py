@@ -1,6 +1,7 @@
 """Unit tests for ReWOO execution helpers."""
 
 from typing import Any, Dict
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -261,6 +262,53 @@ Final: Use #E1
 
     assert result.used_rewoo is True
     assert result.answer == "synthesized-with-separate-adapter"
+
+
+@pytest.mark.asyncio
+async def test_rewoo_run_falls_back_on_provider_sdk_exception():
+    from openai import RateLimitError
+
+    response = MagicMock()
+    response.status_code = 429
+    response.headers = {}
+    response.request = MagicMock()
+    provider_error = RateLimitError(
+        message="provider exploded",
+        response=response,
+        body={"error": {"message": "provider exploded"}},
+    )
+
+    class _PlannerAdapter:
+        async def generate(self, prompt):
+            raise provider_error
+
+    runtime = _build_runtime_with_executors(
+        {
+            "echo": lambda args, ctx: ToolResult("echo", True, args["text"]),
+        }
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="echo", description="echo", input_schema={"text": "string"}),
+        executor=lambda args, ctx: ToolResult("echo", True, args["text"]),
+    )
+    engine = RewooEngine(
+        runtime=runtime,
+        registry=registry,
+        planner_adapter=_PlannerAdapter(),
+        synthesizer_adapter=None,
+        config=RewooEngineConfig(),
+    )
+
+    from vecna.core.hive_state import HiveState
+
+    state = HiveState()
+    state.ensure_identity()
+
+    result = await engine.run("complex task", state, ToolExecutionContext())
+
+    assert result.used_rewoo is False
+    assert "provider exploded" in result.fallback_reason
 
 
 @pytest.mark.asyncio

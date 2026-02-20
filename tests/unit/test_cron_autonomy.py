@@ -94,7 +94,8 @@ class TestHeartbeatActions:
         assert isinstance(d["last_run"], str)
         # Should be parseable back to datetime
         parsed = datetime.fromisoformat(d["last_run"])
-        assert isinstance(parsed, datetime)
+        assert parsed.isoformat() == d["last_run"]
+        assert d["last_run"] == action.last_run.isoformat()
 
 
 class TestHeartbeatActionEdgeCases:

@@ -11,6 +11,7 @@ This allows VECNA to use existing Copilot authentication
 without requiring a separate OAuth flow.
 """
 
+import asyncio
 import os
 import json
 import subprocess
@@ -42,6 +43,12 @@ class SystemTokenDiscovery:
 
     def __init__(self):
         self._system = platform.system()
+        self._discovery_errors = (
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+            subprocess.SubprocessError,
+        )
 
     def discover(self) -> Optional[DiscoveredToken]:
         """
@@ -63,7 +70,7 @@ class SystemTokenDiscovery:
                 result = method()
                 if result and result.token:
                     return result
-            except Exception:
+            except self._discovery_errors:
                 # Continue to next source on any error
                 continue
 
@@ -89,7 +96,7 @@ class SystemTokenDiscovery:
                 result = method()
                 if result and result.token:
                     tokens.append(result)
-            except Exception:
+            except self._discovery_errors:
                 continue
 
         return tokens
@@ -392,5 +399,5 @@ async def verify_token_for_copilot(token: str) -> Tuple[bool, Optional[dict]]:
                     data = await response.json()
                     return True, data
                 return False, None
-    except Exception:
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return False, None

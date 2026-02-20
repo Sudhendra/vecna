@@ -5,14 +5,14 @@ class DummyCursor:
     def __init__(self, rows=None):
         self.queries = []
         self.params = []
-        self._rows = rows or []
+        self.rows = rows or []
 
     def execute(self, query, params):
         self.queries.append(query)
         self.params.append(params)
 
     def fetchall(self):
-        return self._rows
+        return self.rows
 
     def __enter__(self):
         return self
@@ -98,7 +98,7 @@ def test_hybrid_search_keeps_filter_params_before_second_vector(monkeypatch):
 def test_tokenize_normalizes_text():
     store = PgMemoryStore(connection_string="postgresql://test", embedder=_mock_embedder)
 
-    assert store._tokenize("Neural-cache consistency, v2.0!") == [
+    assert store.tokenize_text("Neural-cache consistency, v2.0!") == [
         "neural",
         "cache",
         "consistency",
@@ -116,8 +116,8 @@ def test_bm25_score_rewards_exact_term_coverage():
         ["cache", "check", "status", "note"],
     ]
 
-    exact_score = store._bm25_score(query_tokens, corpus_tokens[0], corpus_tokens)
-    loose_score = store._bm25_score(query_tokens, corpus_tokens[1], corpus_tokens)
+    exact_score = store.score_bm25(query_tokens, corpus_tokens[0], corpus_tokens)
+    loose_score = store.score_bm25(query_tokens, corpus_tokens[1], corpus_tokens)
 
     assert exact_score > loose_score
 

@@ -22,6 +22,8 @@ from vecna.adapters.anthropic_adapter import AnthropicAdapter
 
 logger = logging.getLogger("vecna.config.factory")
 
+ADAPTER_CREATION_ERRORS = (ImportError, AttributeError, RuntimeError, TypeError, ValueError)
+
 
 def create_adapter_from_entry(
     entry: ModelEntry,
@@ -62,6 +64,8 @@ def create_adapter_from_entry(
         base_url=entry.base_url,
         extra_params=entry.extra_params.copy() if entry.extra_params else {},
         persona=persona_prompt,
+        provider=entry.provider,
+        allow_yaml_fallback=entry.allow_yaml_fallback,
     )
 
     # Create appropriate adapter based on provider
@@ -83,7 +87,7 @@ def create_adapter_from_entry(
             logger.warning(f"Unknown provider '{entry.provider}' for model '{entry.name}'")
             return None
 
-    except Exception as e:
+    except ADAPTER_CREATION_ERRORS as e:
         logger.error(f"Failed to create adapter for '{entry.name}': {e}")
         return None
 
@@ -105,7 +109,7 @@ def _create_copilot_adapter(config: ModelConfig, entry: ModelEntry) -> Optional[
     except ImportError:
         logger.debug("Copilot auth module not available")
         return None
-    except Exception as e:
+    except ADAPTER_CREATION_ERRORS as e:
         logger.debug(f"Copilot adapter creation failed: {e}")
         return None
 

@@ -180,7 +180,7 @@ def test_hive_loop_falls_back_to_legacy_when_rewoo_planner_raises_runtime_error(
 def test_hive_loop_rewoo_appends_execution_summary_to_session_log(monkeypatch):
     loop = _build_loop(enable_rewoo_planning=True)
     fake_session = _FakeSessionManager()
-    loop._session_manager = fake_session
+    loop.set_session_manager(fake_session)
 
     registry = ToolRegistry()
     registry.register(

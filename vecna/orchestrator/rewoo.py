@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from vecna.adapters.base import BaseAdapter
 from vecna.core.hive_state import HiveState
 from vecna.observability.langfuse import trace_span
+from vecna.orchestrator.provider_errors import PROVIDER_API_ERRORS
 from vecna.tools.registry import ToolRegistry
 from vecna.tools.router import ToolRouter
 from vecna.tools.runtime import ToolRuntime
@@ -195,7 +196,21 @@ class RewooEngine:
                 prompt = self._build_synthesis_prompt(task, execution)
                 try:
                     response = await synthesis_adapter.generate(prompt)
-                except Exception as exc:
+                except (
+                    asyncio.TimeoutError,
+                    ConnectionError,
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    LookupError,
+                    KeyError,
+                    AttributeError,
+                    ImportError,
+                    AssertionError,
+                    MemoryError,
+                    SystemError,
+                    OSError,
+                ) as exc:
                     logger.warning("ReWOO synthesis adapter call failed: %s", exc)
                 else:
                     main = _extract_main_response(response)
@@ -220,7 +235,29 @@ class RewooEngine:
             execution = await self.execute_plan(plan, context)
             answer = await self.synthesize_answer(task, execution)
             return RewooExecutionResult(answer=answer, execution=execution, used_rewoo=True)
-        except Exception as exc:
+        except PROVIDER_API_ERRORS as exc:
+            logger.warning("ReWOO run failed with provider API error, falling back: %s", exc)
+            return RewooExecutionResult(
+                answer="",
+                execution=None,
+                used_rewoo=False,
+                fallback_reason=str(exc),
+            )
+        except (
+            asyncio.TimeoutError,
+            ConnectionError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            LookupError,
+            KeyError,
+            AttributeError,
+            ImportError,
+            AssertionError,
+            MemoryError,
+            SystemError,
+            OSError,
+        ) as exc:
             logger.warning("ReWOO run failed, falling back to legacy path: %s", exc)
             return RewooExecutionResult(
                 answer="",

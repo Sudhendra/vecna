@@ -245,12 +245,16 @@ class ConsensusEngine:
         embedding_a: Optional[List[float]] = None,
         embedding_b: Optional[List[float]] = None,
     ) -> bool:
-        """Check similarity using embeddings first, Jaccard as fallback.
+        """Check response similarity using the documented fallback hierarchy.
 
-        When both embeddings are provided, cosine similarity is used exclusively.
-        The Jaccard fallback is only used when embeddings are unavailable.
-        Per Amendment 14, embedding cosine is acceptable for response-level
-        consensus (n = number of adapters, always small).
+        Similarity hierarchy in Vecna is:
+        1) pgvector cosine (database tier, when persisted retrieval is available),
+        2) in-memory cosine (this method, when embeddings are provided),
+        3) Jaccard overlap (text-only fallback when embeddings are unavailable).
+
+        For consensus merging, this helper implements tiers 2 and 3. Per
+        Amendment 14, in-memory cosine is acceptable here because adapter fanout
+        is small.
         """
         if embedding_a is not None and embedding_b is not None:
             sim = self._cosine_similarity(embedding_a, embedding_b)

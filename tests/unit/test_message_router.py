@@ -57,14 +57,14 @@ class MockHiveLoop:
     """Mock HiveLoop for testing router integration."""
 
     def __init__(self, response: str = "Mock response"):
-        self._response = response
+        self.response = response
         self.last_task = ""
         self.call_count = 0
 
     async def think(self, task: str, **kwargs: Any) -> str:
         self.last_task = task
         self.call_count += 1
-        return self._response
+        return self.response
 
 
 class FailingHiveLoop:
@@ -78,12 +78,12 @@ class SlowHiveLoop:
     """HiveLoop mock that delays response."""
 
     def __init__(self, delay: float = 0.05, response: str = "Slow response"):
-        self._delay = delay
-        self._response = response
+        self.delay = delay
+        self.response = response
 
     async def think(self, task: str, **kwargs: Any) -> str:
-        await asyncio.sleep(self._delay)
-        return self._response
+        await asyncio.sleep(self.delay)
+        return self.response
 
 
 # ===========================================================================

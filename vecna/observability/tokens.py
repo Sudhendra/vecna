@@ -10,6 +10,8 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("vecna.observability.tokens")
 
+TOKEN_ESTIMATION_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+
 # Lazy-loaded encoder
 _encoder = None
 
@@ -31,7 +33,7 @@ def _get_encoder():
     except ImportError:
         logger.debug("tiktoken not available, will use character estimation")
         return None
-    except Exception as e:
+    except TOKEN_ESTIMATION_ERRORS as e:
         logger.debug(f"tiktoken initialization failed: {e}")
         return None
 
@@ -57,7 +59,7 @@ def estimate_tokens(text: str, model: Optional[str] = None) -> int:
     if encoder is not None:
         try:
             return len(encoder.encode(text))
-        except Exception as e:
+        except TOKEN_ESTIMATION_ERRORS as e:
             logger.debug(f"tiktoken encoding failed: {e}")
 
     # Fallback: ~4 characters per token (rough estimate for English text)

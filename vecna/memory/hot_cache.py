@@ -126,12 +126,23 @@ class RedisHotCache:
             self._redis = self._redis_module.from_url(self.redis_url, decode_responses=True)
         return self._redis
 
+    def _redis_errors(self):
+        """Return Redis-related exception types, even without redis installed."""
+        redis_error = getattr(self._redis_module, "RedisError", None)
+        if redis_error is not None:
+            return (redis_error, OSError, TimeoutError, ConnectionError)
+        return (OSError, TimeoutError, ConnectionError)
+
+    def _redis_json_errors(self):
+        """Return Redis + JSON decoding errors."""
+        return self._redis_errors() + (json.JSONDecodeError, TypeError, ValueError, KeyError)
+
     def _is_connected(self) -> bool:
         """Check if Redis is connected."""
         try:
             self._get_redis().ping()
             return True
-        except Exception:
+        except self._redis_errors():
             return False
 
     # ============================================================
@@ -166,7 +177,7 @@ class RedisHotCache:
 
             return True
 
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to push event to Redis: {e}")
             # Fallback to local cache
             with self._local_lock:
@@ -206,12 +217,12 @@ class RedisHotCache:
                     event = CachedEvent.from_dict(data)
                     if event_type is None or event.event_type == event_type:
                         events.append(event)
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
                     continue
 
             return events
 
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to get events from Redis: {e}")
             # Fallback to local cache
             with self._local_lock:
@@ -229,7 +240,7 @@ class RedisHotCache:
             r = self._get_redis()
             r.delete(self.EVENTS_KEY)
             return True
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to clear events in Redis: {e}")
             with self._local_lock:
                 self._local_cache["events"] = []
@@ -251,7 +262,7 @@ class RedisHotCache:
             r = self._get_redis()
             r.setex(self.CONTEXT_KEY, ttl, json.dumps(context))
             return True
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to set context in Redis: {e}")
             with self._local_lock:
                 self._local_cache["context"] = context
@@ -265,7 +276,7 @@ class RedisHotCache:
             if raw:
                 return json.loads(raw)
             return None
-        except Exception as e:
+        except self._redis_json_errors() as e:
             logger.warning(f"Failed to get context from Redis: {e}")
             with self._local_lock:
                 return self._local_cache.get("context")
@@ -288,7 +299,7 @@ class RedisHotCache:
             r = self._get_redis()
             r.setex(self.GOALS_KEY, ttl, json.dumps(goals))
             return True
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to set goals in Redis: {e}")
             with self._local_lock:
                 self._local_cache["goals"] = goals
@@ -302,7 +313,7 @@ class RedisHotCache:
             if raw:
                 return json.loads(raw)
             return []
-        except Exception as e:
+        except self._redis_json_errors() as e:
             logger.warning(f"Failed to get goals from Redis: {e}")
             with self._local_lock:
                 return self._local_cache.get("goals", [])
@@ -330,7 +341,7 @@ class RedisHotCache:
             if raw:
                 return json.loads(raw)
             return None
-        except Exception as e:
+        except self._redis_json_errors() as e:
             logger.warning(f"Failed to get embedding from Redis: {e}")
             with self._local_lock:
                 return self._local_cache.get(key)
@@ -346,7 +357,7 @@ class RedisHotCache:
             r = self._get_redis()
             r.setex(key, ttl, json.dumps(embedding))
             return True
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to set embedding in Redis: {e}")
             with self._local_lock:
                 self._local_cache[key] = embedding
@@ -376,7 +387,7 @@ class RedisHotCache:
 
             return result
 
-        except Exception as e:
+        except self._redis_json_errors() as e:
             logger.warning(f"Failed to get embeddings batch from Redis: {e}")
             result = {}
             with self._local_lock:
@@ -405,7 +416,7 @@ class RedisHotCache:
             pipe.execute()
             return True
 
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to set embeddings batch in Redis: {e}")
             with self._local_lock:
                 for content, embedding in embeddings.items():
@@ -429,7 +440,7 @@ class RedisHotCache:
         try:
             r = self._get_redis()
             return r.get(key)
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to get cached retrieval from Redis: {e}")
             with self._local_lock:
                 return self._local_cache.get(key)
@@ -443,7 +454,7 @@ class RedisHotCache:
             r = self._get_redis()
             r.setex(key, ttl, result)
             return True
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to set cached retrieval in Redis: {e}")
             with self._local_lock:
                 self._local_cache[key] = result
@@ -497,7 +508,7 @@ class RedisHotCache:
 
             yield acquired
 
-        except Exception as e:
+        except self._redis_errors() as e:
             if "Could not acquire lock" not in str(e):
                 logger.warning(f"Lock error for {resource}: {e}")
             raise
@@ -509,7 +520,7 @@ class RedisHotCache:
                     r = self._get_redis()
                     if r.get(key) == lock_id:
                         r.delete(key)
-                except Exception:
+                except self._redis_errors():
                     pass
 
     def is_locked(self, resource: str) -> bool:
@@ -519,7 +530,7 @@ class RedisHotCache:
         try:
             r = self._get_redis()
             return r.exists(key) > 0
-        except Exception:
+        except self._redis_errors():
             return False
 
     # ============================================================
@@ -552,7 +563,7 @@ class RedisHotCache:
 
             return stats
 
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.warning(f"Failed to get Redis stats: {e}")
             return {"connected": False, "error": str(e), "local_cache_size": len(self._local_cache)}
 
@@ -572,7 +583,7 @@ class RedisHotCache:
 
             return True
 
-        except Exception as e:
+        except self._redis_errors() as e:
             logger.error(f"Failed to clear Redis cache: {e}")
             return False
 
@@ -676,7 +687,7 @@ class HotMemoryManager:
                     event_type=event_type, payload=payload, session_id=session_id
                 )
                 pg_store.add_event(pg_event)
-            except Exception as e:
+            except (OSError, ValueError, RuntimeError) as e:
                 logger.warning(f"Failed to persist event to PG: {e}")
 
         return event_id
@@ -700,7 +711,7 @@ class HotMemoryManager:
                 embedding = embeddings[0].tolist()
                 self.hot_cache.set_embedding(content, embedding)
                 return embedding
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logger.warning(f"Failed to generate embedding: {e}")
 
         return None
@@ -728,7 +739,7 @@ class HotMemoryManager:
 
             return result
 
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logger.error(f"Failed to retrieve from PG: {e}")
             return "Memory retrieval failed."
 
@@ -739,7 +750,7 @@ class HotMemoryManager:
         try:
             pg_store = self._get_pg_store()
             stats["warm_storage"] = pg_store.get_stats()
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             stats["warm_storage"] = {"error": str(e)}
 
         return stats

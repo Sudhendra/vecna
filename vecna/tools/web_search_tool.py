@@ -126,7 +126,7 @@ async def web_search_executor(args: Dict[str, Any], context: ToolExecutionContex
             output="",
             error=f"search request failed: {exc}",
         )
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         return ToolResult(
             tool_name="web_search",
             success=False,

@@ -161,6 +161,26 @@ class PgMemoryStore:
 
         return self._conn
 
+    def _db_errors(self):
+        """Database/connection errors for psycopg2 operations."""
+        return (self._psycopg2.Error, OSError, TimeoutError)
+
+    def _db_json_errors(self):
+        """Database plus JSON serialization/deserialization errors."""
+        return self._db_errors() + (json.JSONDecodeError, TypeError, ValueError, KeyError)
+
+    def _store_errors(self):
+        """Operational errors for embedding + DB flows."""
+        return self._db_json_errors() + (RuntimeError, ImportError, AttributeError, IndexError)
+
+    def _redis_errors(self):
+        """Redis cache exceptions with optional dependency safety."""
+        redis_module = getattr(self._redis_cache, "_redis_module", None)
+        redis_error = getattr(redis_module, "RedisError", None) if redis_module else None
+        if redis_error is not None:
+            return (redis_error, OSError, TimeoutError, ConnectionError)
+        return (OSError, TimeoutError, ConnectionError)
+
     def _get_embedder(self):
         """
         Lazy initialization of embedding client.
@@ -252,7 +272,7 @@ class PgMemoryStore:
                         self._embedding_cache[cache_key] = cached
                         results.append((i, cached))
                         continue
-                except Exception:
+                except self._redis_errors():
                     pass  # Redis unavailable, continue without
 
             # Need to generate embedding
@@ -279,7 +299,7 @@ class PgMemoryStore:
                     if self._redis_cache:
                         try:
                             self._redis_cache.set_embedding(texts_to_embed[j], embedding_list)
-                        except Exception:
+                        except self._redis_errors():
                             pass
             else:
                 # OpenAI API
@@ -300,7 +320,7 @@ class PgMemoryStore:
                     if self._redis_cache:
                         try:
                             self._redis_cache.set_embedding(texts_to_embed[j], embedding)
-                        except Exception:
+                        except self._redis_errors():
                             pass
 
         # Sort results by original index
@@ -361,7 +381,7 @@ class PgMemoryStore:
             logger.debug(f"Added memory item {item_id}")
             return item_id
 
-        except Exception as e:
+        except self._store_errors() as e:
             conn.rollback()
             logger.error(f"Failed to add memory item: {e}")
             return None
@@ -431,7 +451,7 @@ class PgMemoryStore:
             logger.debug(f"Added {len(item_ids)} memory items in batch")
             return item_ids
 
-        except Exception as e:
+        except self._store_errors() as e:
             conn.rollback()
             logger.error(f"Failed to add memory items batch: {e}")
             return []
@@ -492,7 +512,7 @@ class PgMemoryStore:
 
             conn.commit()
             return len(chunks)
-        except Exception as e:
+        except self._store_errors() as e:
             conn.rollback()
             logger.error(f"Failed to upsert markdown chunks: {e}")
             return 0
@@ -504,7 +524,7 @@ class PgMemoryStore:
                 cur.execute("SELECT file_path, content_hash FROM markdown_file_hashes")
                 rows = cur.fetchall()
             return {row[0]: row[1] for row in rows}
-        except Exception as e:
+        except self._db_errors() as e:
             logger.error(f"Failed to fetch markdown file hashes: {e}")
             return {}
 
@@ -515,7 +535,7 @@ class PgMemoryStore:
                 cur.execute("DELETE FROM markdown_chunks WHERE source_file = %s", (file_path,))
                 cur.execute("DELETE FROM markdown_file_hashes WHERE file_path = %s", (file_path,))
             conn.commit()
-        except Exception as e:
+        except self._db_errors() as e:
             conn.rollback()
             logger.error(f"Failed to delete markdown file records: {e}")
 
@@ -556,7 +576,7 @@ class PgMemoryStore:
                 updated_at=row[11],
             )
 
-        except Exception as e:
+        except self._db_errors() as e:
             logger.error(f"Failed to get memory item: {e}")
             return None
 
@@ -613,7 +633,7 @@ class PgMemoryStore:
             conn.commit()
             return True
 
-        except Exception as e:
+        except self._db_json_errors() as e:
             conn.rollback()
             logger.error(f"Failed to update memory item: {e}")
             return False
@@ -627,7 +647,7 @@ class PgMemoryStore:
                 cur.execute("DELETE FROM memory_items WHERE id = %s", (item_id,))
             conn.commit()
             return True
-        except Exception as e:
+        except self._db_errors() as e:
             conn.rollback()
             logger.error(f"Failed to delete memory item: {e}")
             return False
@@ -641,6 +661,10 @@ class PgMemoryStore:
         if not text:
             return []
         return re.findall(r"[a-z0-9]+", text.lower())
+
+    def tokenize_text(self, text: str) -> List[str]:
+        """Public tokenization helper used by tests and diagnostics."""
+        return self._tokenize(text)
 
     def _bm25_score(
         self,
@@ -681,6 +705,23 @@ class PgMemoryStore:
                 score += idf * (numerator / denominator)
 
         return score
+
+    def score_bm25(
+        self,
+        query_tokens: List[str],
+        document_tokens: List[str],
+        corpus_tokens: List[List[str]],
+        k1: float = 1.5,
+        b: float = 0.75,
+    ) -> float:
+        """Public BM25 scoring helper used by tests and diagnostics."""
+        return self._bm25_score(
+            query_tokens=query_tokens,
+            document_tokens=document_tokens,
+            corpus_tokens=corpus_tokens,
+            k1=k1,
+            b=b,
+        )
 
     def search(
         self,
@@ -832,7 +873,7 @@ class PgMemoryStore:
 
             return results
 
-        except Exception as e:
+        except self._store_errors() as e:
             logger.error(f"Failed to search memory: {e}")
             return []
 
@@ -855,7 +896,7 @@ class PgMemoryStore:
                     (item_ids,),
                 )
             conn.commit()
-        except Exception as e:
+        except self._db_errors() as e:
             conn.rollback()
             logger.warning(f"Failed to update retrieval stats: {e}")
 
@@ -886,7 +927,7 @@ class PgMemoryStore:
                 )
             conn.commit()
             return True
-        except Exception as e:
+        except self._db_errors() as e:
             conn.rollback()
             logger.warning(f"Failed to record session: {e}")
             return False
@@ -925,7 +966,7 @@ class PgMemoryStore:
             conn.commit()
             return edge_id
 
-        except Exception as e:
+        except self._db_json_errors() as e:
             conn.rollback()
             logger.error(f"Failed to add memory edge: {e}")
             return None
@@ -982,7 +1023,7 @@ class PgMemoryStore:
                 for row in rows
             ]
 
-        except Exception as e:
+        except self._db_errors() as e:
             logger.error(f"Failed to get memory edges: {e}")
             return []
 
@@ -1108,7 +1149,7 @@ class PgMemoryStore:
 
             return results
 
-        except Exception as e:
+        except self._db_errors() as e:
             logger.error(f"Failed to get related items: {e}")
             return []
 
@@ -1137,7 +1178,7 @@ class PgMemoryStore:
             conn.commit()
             return event_id
 
-        except Exception as e:
+        except self._db_json_errors() as e:
             conn.rollback()
             logger.error(f"Failed to add memory event: {e}")
             return None
@@ -1196,7 +1237,7 @@ class PgMemoryStore:
                 for row in rows
             ]
 
-        except Exception as e:
+        except self._db_errors() as e:
             logger.error(f"Failed to get recent events: {e}")
             return []
 
@@ -1244,7 +1285,7 @@ class PgMemoryStore:
             conn.commit()
             return episode_id
 
-        except Exception as e:
+        except self._store_errors() as e:
             conn.rollback()
             logger.error(f"Failed to add episode: {e}")
             return None
@@ -1311,7 +1352,7 @@ class PgMemoryStore:
                 for row in rows
             ]
 
-        except Exception as e:
+        except self._store_errors() as e:
             logger.error(f"Failed to search episodes: {e}")
             return []
 
@@ -1529,7 +1570,7 @@ class PgMemoryStore:
 
             return stats
 
-        except Exception as e:
+        except self._db_errors() as e:
             logger.error(f"Failed to get stats: {e}")
             return {}
 
@@ -1805,7 +1846,7 @@ class PgMemoryStore:
             logger.debug(f"Upserted memory items: {counts}")
             return counts
 
-        except Exception as e:
+        except self._store_errors() as e:
             conn.rollback()
             # If the constraint doesn't exist, try simpler approach
             if "memory_items_content_type_unique" in str(e):
@@ -1865,7 +1906,7 @@ class PgMemoryStore:
             conn.commit()
             return counts
 
-        except Exception as e:
+        except self._store_errors() as e:
             conn.rollback()
             logger.error(f"Fallback insert failed: {e}")
             return counts
