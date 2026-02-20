@@ -1,5 +1,6 @@
 """Runtime executor for parsed tool calls and approval controls."""
 
+import asyncio
 import inspect
 import re
 import time
@@ -108,7 +109,13 @@ class ToolRuntime:
                                 if inspect.isawaitable(maybe_result)
                                 else maybe_result
                             )
-                        except Exception as exc:
+                        except (
+                            asyncio.TimeoutError,
+                            OSError,
+                            RuntimeError,
+                            TypeError,
+                            ValueError,
+                        ) as exc:
                             result = ToolResult(call.tool_name, False, "", error=str(exc))
 
                         latency_ms = (time.perf_counter() - start) * 1000

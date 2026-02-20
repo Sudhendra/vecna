@@ -190,11 +190,13 @@ class TestPostgresStore:
 
         # Load, modify, and save again
         loaded = store.load(key)
+        assert loaded is not None
         loaded.add_fact(Fact(content="Additional fact", confidence=0.9, source_model="test"))
         store.save(loaded, key)
 
         # Load again and verify
         final = store.load(key)
+        assert final is not None
         assert len(final.facts) == 2
 
         # Cleanup
@@ -218,8 +220,8 @@ class TestPgStateManager:
         import os
 
         manager = PgStateManager(pg_url=os.environ.get("VECNA_PG_URL"))
-        assert manager is not None
-        assert manager.pg_url is not None
+        assert manager.pg_url == os.environ.get("VECNA_PG_URL")
+        assert manager.auto_sync_memory is False
 
     def test_load_state(self, pg_state_manager: PgStateManager):
         """Test loading state."""
@@ -237,9 +239,11 @@ class TestPgStateManager:
         # Now should load
         loaded = pg_state_manager.load_state(key)
         assert loaded is not None
+        assert loaded.version == new_state.version
+        assert len(loaded.facts) == 0
 
         # Cleanup
-        pg_state_manager._get_pg_store().delete(key)
+        pg_state_manager.delete_state(key)
 
     def test_save_state(self, pg_state_manager: PgStateManager):
         """Test saving state."""
@@ -265,11 +269,11 @@ class TestPgStateManager:
         assert len(loaded.facts) >= 1
 
         # Cleanup
-        pg_state_manager._get_pg_store().delete(key)
+        pg_state_manager.delete_state(key)
 
     def test_check_pg_available(self, pg_state_manager: PgStateManager):
         """Test PostgreSQL availability check."""
-        available = pg_state_manager._check_pg_available()
+        available = pg_state_manager.is_postgres_available()
         assert available is True
 
     def test_get_state_metadata(self, pg_state_manager: PgStateManager):
@@ -284,13 +288,12 @@ class TestPgStateManager:
 
         pg_state_manager.save_state(state, key)
 
-        # Get metadata via underlying store
-        metadata = pg_state_manager._get_pg_store().get_metadata(key)
+        metadata = pg_state_manager.get_state_metadata(key)
         assert metadata is not None
         assert metadata["num_hypotheses"] == 1
 
         # Cleanup
-        pg_state_manager._get_pg_store().delete(key)
+        pg_state_manager.delete_state(key)
 
 
 # ============================================================
@@ -319,7 +322,7 @@ class TestPgStateManagerRedis:
 
     def test_check_redis_available(self, manager_with_redis: PgStateManager):
         """Test Redis availability check."""
-        available = manager_with_redis._check_redis_available()
+        available = manager_with_redis.is_redis_available()
         assert available is True
 
     def test_cache_and_get_embedding(self, manager_with_redis: PgStateManager):
@@ -395,20 +398,25 @@ class TestMemorySynchronization:
             pg_url=os.environ.get("VECNA_PG_URL"),
             redis_url=os.environ.get("VECNA_REDIS_URL") if redis_available else None,
             auto_sync_memory=False,  # We'll test manual sync
+            embedder=mock_embedder,
+            embedding_dim=MOCK_EMBEDDING_DIM,
         )
-
-        # Inject mock embedder into the memory store so tests don't need OpenAI
-        store = manager._get_memory_store()
-        if store is not None:
-            store._custom_embedder = mock_embedder
-            store.embedding_dim = MOCK_EMBEDDING_DIM
 
         yield manager
 
     def test_get_memory_store(self, manager_with_memory: PgStateManager):
-        """Test getting memory store."""
-        store = manager_with_memory._get_memory_store()
-        assert store is not None
+        """Test manager can sync memory items via public API."""
+        state = HiveState()
+        state.add_fact(
+            Fact(
+                content=f"Store availability check {uuid.uuid4()}",
+                confidence=0.9,
+                source_model="test",
+                domain="test",
+            )
+        )
+        counts = manager_with_memory.sync_memory_from_state(state)
+        assert counts.get("fact", 0) >= 1
 
     def test_sync_memory_from_state(self, manager_with_memory: PgStateManager):
         """Test syncing memory from state."""
@@ -431,14 +439,12 @@ class TestMemorySynchronization:
             )
         )
 
-        # Sync to memory
-        store = manager_with_memory._get_memory_store()
-        if store is not None:
-            counts = store.add_from_state(state)
-            assert isinstance(counts, dict)
-            # Should have synced some items
-            total = sum(counts.values())
-            assert total >= 2
+        # Sync to memory via public interface
+        counts = manager_with_memory.sync_memory_from_state(state)
+        assert isinstance(counts, dict)
+        # Should have synced some items
+        total = sum(counts.values())
+        assert total >= 2
 
 
 # ============================================================
@@ -479,7 +485,7 @@ class TestAutoSync:
         assert result is True
 
         # Cleanup
-        manager._get_pg_store().delete(key)
+        manager.delete_state(key)
 
 
 # ============================================================
@@ -493,7 +499,7 @@ class TestCombinedStats:
     def test_get_combined_stats(self, pg_state_manager: PgStateManager):
         """Test getting combined stats from all stores."""
         # The manager should be able to report status
-        pg_available = pg_state_manager._check_pg_available()
+        pg_available = pg_state_manager.is_postgres_available()
         assert pg_available is True
 
         # Get Redis stats (may not be connected)
@@ -510,7 +516,7 @@ class TestConnectionHandling:
     """Test connection handling and resilience."""
 
     def test_connection_reuse(self, postgres_available):
-        """Test that connections are reused."""
+        """Repeated PostgreSQL availability checks remain stable."""
         if not postgres_available:
             pytest.skip("PostgreSQL not available")
 
@@ -518,14 +524,11 @@ class TestConnectionHandling:
 
         manager = PgStateManager(pg_url=os.environ.get("VECNA_PG_URL"))
 
-        # Multiple operations should use same connection
-        manager._check_pg_available()
-        store1 = manager._get_pg_store()
+        first_check = manager.is_postgres_available()
+        second_check = manager.is_postgres_available()
 
-        manager._check_pg_available()
-        store2 = manager._get_pg_store()
-
-        assert store1 is store2
+        assert first_check is True
+        assert second_check is True
 
     def test_lazy_initialization(self, postgres_available):
         """Test that stores are lazily initialized."""
@@ -537,9 +540,9 @@ class TestConnectionHandling:
         manager = PgStateManager(pg_url=os.environ.get("VECNA_PG_URL"))
 
         # Stores should be None initially
-        assert manager._pg_store is None
-        assert manager._memory_store is None
+        assert manager.is_postgres_store_initialized() is False
+        assert manager.is_memory_store_initialized() is False
 
         # Access forces initialization
-        _ = manager._get_pg_store()
-        assert manager._pg_store is not None
+        _ = manager.is_postgres_available(force=True)
+        assert manager.is_postgres_store_initialized() is True

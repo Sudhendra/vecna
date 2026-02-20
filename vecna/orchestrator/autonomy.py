@@ -71,7 +71,21 @@ class AutonomyLoop(HiveLoop):
                     self._mark_completed(goal_queue, goal_id)
                     terminal_error = None
                     break
-                except Exception as exc:
+                except (
+                    asyncio.TimeoutError,
+                    ConnectionError,
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    LookupError,
+                    KeyError,
+                    AttributeError,
+                    ImportError,
+                    AssertionError,
+                    MemoryError,
+                    SystemError,
+                    OSError,
+                ) as exc:
                     terminal_error = str(exc)
                     if attempt >= max_retries:
                         break

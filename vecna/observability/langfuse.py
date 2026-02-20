@@ -26,6 +26,8 @@ from typing import Any, Dict, Generator, Optional, Union
 
 logger = logging.getLogger("vecna.observability.langfuse")
 
+LANGFUSE_NON_FATAL_ERRORS = (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)
+
 # Global client instance (lazy init)
 _client = None
 
@@ -87,7 +89,7 @@ def get_langfuse():
     except ImportError:
         logger.warning("langfuse package not installed, tracing disabled")
         return None
-    except Exception as e:
+    except LANGFUSE_NON_FATAL_ERRORS as e:
         logger.warning(f"Failed to initialize Langfuse: {e}")
         return None
 
@@ -182,7 +184,7 @@ def trace_request(
         ) as span:
             _trace_active.set(True)
             yield _TraceContext(span, client)
-    except Exception as e:
+    except LANGFUSE_NON_FATAL_ERRORS as e:
         logger.warning(f"Failed to create trace: {e}")
         yield _NoOpTraceContext()
     finally:
@@ -233,7 +235,7 @@ class _TraceContext:
                 self.span.update(level=level)
             if status_message is not None:
                 self.span.update(status_message=status_message)
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to update trace: {e}")
 
     def set_output(self, output: str):
@@ -288,7 +290,7 @@ def trace_generation(
             metadata=metadata,
         ) as generation:
             yield _GenerationContext(generation)
-    except Exception as e:
+    except LANGFUSE_NON_FATAL_ERRORS as e:
         logger.warning(f"Failed to create generation: {e}")
         yield _NoOpGenerationContext()
 
@@ -319,7 +321,7 @@ class _GenerationContext:
     def set_output(self, output: str):
         try:
             self.generation.update(output=_maybe_redact(output))
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to set generation output: {e}")
 
     def set_usage(self, prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0):
@@ -333,20 +335,20 @@ class _GenerationContext:
                     "total": total_tokens,
                 }
             )
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to set generation usage: {e}")
 
     def set_metadata(self, metadata: Dict[str, Any]):
         try:
             self._metadata.update(metadata)
             self.generation.update(metadata=self._metadata)
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to set generation metadata: {e}")
 
     def update(self, **kwargs):
         try:
             self.generation.update(**kwargs)
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to update generation: {e}")
 
 
@@ -387,7 +389,7 @@ def trace_span(
             yield ctx
             # Auto-add duration on exit
             ctx._finalize()
-    except Exception as e:
+    except LANGFUSE_NON_FATAL_ERRORS as e:
         logger.warning(f"Failed to create span: {e}")
         yield _NoOpSpanContext()
 
@@ -446,7 +448,7 @@ class _SpanContext:
                 update_kwargs["status_message"] = self._status_message
 
             self.span.update(**update_kwargs)
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to finalize span: {e}")
 
 
@@ -532,7 +534,7 @@ class _LegacyTraceHandle:
             self._ctx = self._span_cm.__enter__()
             self._active = True
             _trace_active.set(True)
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to start trace: {e}")
 
     def end(
@@ -556,7 +558,7 @@ class _LegacyTraceHandle:
                 if status_message is not None:
                     self._ctx.update(status_message=status_message)
             self._span_cm.__exit__(None, None, None)
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to end trace: {e}")
         finally:
             self._active = False
@@ -624,7 +626,7 @@ def create_generation(
         generation.end()
 
         return generation
-    except Exception as e:
+    except LANGFUSE_NON_FATAL_ERRORS as e:
         logger.warning(f"Failed to create generation: {e}")
         return None
 
@@ -653,7 +655,7 @@ def flush():
     if client:
         try:
             client.flush()
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to flush Langfuse: {e}")
 
 
@@ -665,7 +667,7 @@ def shutdown():
             _client.flush()
             _client.shutdown()
             logger.info("Langfuse client shutdown")
-        except Exception as e:
+        except LANGFUSE_NON_FATAL_ERRORS as e:
             logger.warning(f"Failed to shutdown Langfuse: {e}")
         finally:
             _client = None

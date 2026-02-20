@@ -317,7 +317,7 @@ class TestHumanModelPersistence:
             name="test-hm",
         )
         result = await loop.think("Hello")
-        assert len(result) > 0
+        assert "Got it, I'll be concise." in result
 
 
 class TestHumanModelConstructorInjection:

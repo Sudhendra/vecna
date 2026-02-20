@@ -1,11 +1,14 @@
 from vecna.memory.pg_store import PgMemoryStore
 
 
+MEMORY_TOOL_ERRORS = (ImportError, OSError, RuntimeError, TypeError, ValueError)
+
+
 def memory_search(query: str, max_results: int = 6, min_score: float = 0.35):
     try:
         store = PgMemoryStore()
         items = store.search(query, top_k=max_results)
-    except Exception:
+    except MEMORY_TOOL_ERRORS:
         return []
     return [
         {
@@ -23,7 +26,7 @@ def memory_get(item_id: str):
     try:
         store = PgMemoryStore()
         item = store.get_item(item_id)
-    except Exception:
+    except MEMORY_TOOL_ERRORS:
         return None
     if item is None:
         return None

@@ -195,7 +195,21 @@ class RewooEngine:
                 prompt = self._build_synthesis_prompt(task, execution)
                 try:
                     response = await synthesis_adapter.generate(prompt)
-                except Exception as exc:
+                except (
+                    asyncio.TimeoutError,
+                    ConnectionError,
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    LookupError,
+                    KeyError,
+                    AttributeError,
+                    ImportError,
+                    AssertionError,
+                    MemoryError,
+                    SystemError,
+                    OSError,
+                ) as exc:
                     logger.warning("ReWOO synthesis adapter call failed: %s", exc)
                 else:
                     main = _extract_main_response(response)
@@ -220,7 +234,21 @@ class RewooEngine:
             execution = await self.execute_plan(plan, context)
             answer = await self.synthesize_answer(task, execution)
             return RewooExecutionResult(answer=answer, execution=execution, used_rewoo=True)
-        except Exception as exc:
+        except (
+            asyncio.TimeoutError,
+            ConnectionError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            LookupError,
+            KeyError,
+            AttributeError,
+            ImportError,
+            AssertionError,
+            MemoryError,
+            SystemError,
+            OSError,
+        ) as exc:
             logger.warning("ReWOO run failed, falling back to legacy path: %s", exc)
             return RewooExecutionResult(
                 answer="",

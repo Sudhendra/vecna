@@ -501,7 +501,15 @@ class HiveLoop:
             logger.error("Adapter %s failed: %s", adapter.name, e)
             breaker.record_failure()
             return None
-        except Exception as e:
+        except (
+            LookupError,
+            AssertionError,
+            ImportError,
+            MemoryError,
+            SystemError,
+            ArithmeticError,
+            EOFError,
+        ) as e:
             logger.error("Adapter %s failed with unexpected exception: %s", adapter.name, e)
             breaker.record_failure()
             return None
@@ -935,6 +943,10 @@ class HiveLoop:
     def get_session_manager(self) -> Optional[SessionManager]:
         """Return the active SessionManager, if initialized."""
         return self._session_manager
+
+    def set_session_manager(self, session_manager: Optional[SessionManager]) -> None:
+        """Set or clear the active SessionManager instance."""
+        self._session_manager = session_manager
 
     def initialize_session_manager(self) -> None:
         if self._session_manager is None:

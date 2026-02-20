@@ -20,6 +20,7 @@ from vecna.adapters.base import (
     CopilotAdapter,
     create_adapter,
 )
+from vecna.config.schema import Provider
 
 
 class TestModelConfig:
@@ -53,6 +54,15 @@ class TestModelConfig:
         assert config.weight == 1.5
         assert config.temperature == 0.3
         assert config.persona == "You are a Python expert."
+
+    def test_model_config_defaults_provider_to_copilot_without_inference(self):
+        """Provider defaults to COPILOT, independent of model/base_url strings."""
+        config = ModelConfig(
+            name="heuristic-check",
+            model_id="claude-3-sonnet-20240229",
+            base_url="https://api.groq.com",
+        )
+        assert config.provider == Provider.COPILOT
 
 
 class TestBaseAdapterPromptBuilding:
@@ -210,7 +220,56 @@ overall_confidence: not_a_number
         # Should not crash, just return partial/empty update
         update = mock_adapter.parse_update(output)
 
-        assert update is not None
+        assert update.source_model == "test-model"
+        assert update.new_facts == ["this is not valid yaml"]
+        assert update.confidence == 0.5
+
+    def test_yaml_fallback_emits_deprecation_warning(self, mock_adapter):
+        """YAML <HIVE_UPDATE> fallback is deprecated and should warn."""
+        output = """
+<HIVE_UPDATE>
+new_facts:
+- content: "Deprecated YAML fallback"
+  confidence: 0.9
+</HIVE_UPDATE>
+"""
+        with pytest.warns(DeprecationWarning, match="YAML HIVE_UPDATE parsing is deprecated"):
+            update = mock_adapter.parse_update(output)
+        assert update.new_facts[0]["content"] == "Deprecated YAML fallback"
+
+    def test_yaml_fallback_can_be_disabled(self):
+        """When disabled, YAML <HIVE_UPDATE> blocks are ignored."""
+
+        class MockAdapter(BaseAdapter):
+            async def generate(self, prompt: str) -> str:
+                return ""
+
+        config = ModelConfig(
+            name="yaml-disabled",
+            model_id="mock-v1",
+            allow_yaml_fallback=False,
+        )
+        adapter = MockAdapter(config)
+        output = """
+<HIVE_UPDATE>
+new_facts:
+- content: "Should be ignored"
+  confidence: 1.0
+</HIVE_UPDATE>
+"""
+        update = adapter.parse_update(output)
+        assert update.new_facts == []
+
+
+class TestPromptDirection:
+    """Prompt should prefer native tool calling over YAML fallback."""
+
+    def test_prompt_prioritizes_tool_calling(self):
+        tool_call_index = HIVE_IDENTITY_PROMPT.find("TOOL_CALL")
+        hive_update_index = HIVE_IDENTITY_PROMPT.find("<HIVE_UPDATE>")
+        assert tool_call_index != -1
+        assert hive_update_index != -1
+        assert tool_call_index < hive_update_index
 
 
 class TestAdapterFactory:
@@ -219,12 +278,17 @@ class TestAdapterFactory:
     def test_create_ollama_adapter(self):
         """Test creating Ollama adapter for local models."""
         config = ModelConfig(
-            name="local-llama", model_id="llama3.2", base_url="http://localhost:11434"
+            name="local-llama",
+            model_id="llama3.2",
+            base_url="http://localhost:11434",
+            provider=Provider.OLLAMA,
         )
 
         adapter = create_adapter(config)
 
         assert isinstance(adapter, OllamaAdapter)
+        assert adapter._get_provider_name() == "ollama"
+        assert adapter.base_url == "http://localhost:11434"
 
     @pytest.mark.skip(reason="Groq adapter not used currently")
     def test_create_groq_adapter(self):
@@ -238,7 +302,8 @@ class TestAdapterFactory:
 
         adapter = create_adapter(config)
 
-        assert isinstance(adapter, GroqAdapter)
+        assert adapter._get_provider_name() == "groq"
+        assert adapter.config.model_id == "llama3-70b-8192"
 
     def test_create_copilot_adapter_default(self):
         """Test that default adapter is Copilot."""
@@ -246,19 +311,22 @@ class TestAdapterFactory:
 
         adapter = create_adapter(config)
 
-        assert isinstance(adapter, CopilotAdapter)
+        assert adapter._get_provider_name() == "copilot"
+        assert adapter.config.model_id == "gpt-4o"
 
     def test_create_transformers_adapter(self):
         """Test creating Transformers adapter for local models."""
         config = ModelConfig(
             name="local-mistral",
             model_id="mistralai/Mistral-7B",
-            # No base_url means use transformers
+            provider=Provider.TRANSFORMERS,
         )
 
         adapter = create_adapter(config)
 
         assert isinstance(adapter, TransformersAdapter)
+        assert adapter._get_provider_name() == "transformers"
+        assert adapter.config.model_id == "mistralai/Mistral-7B"
 
 
 class TestOllamaAdapter:
@@ -327,4 +395,4 @@ class TestHiveIdentityPrompt:
         update_index = HIVE_IDENTITY_PROMPT.rfind("</HIVE_UPDATE>")
         assert update_index != -1
         assert "TOOL_CALL" in HIVE_IDENTITY_PROMPT
-        assert HIVE_IDENTITY_PROMPT.find("TOOL_CALL") > update_index
+        assert HIVE_IDENTITY_PROMPT.find("TOOL_CALL") < update_index

@@ -342,7 +342,7 @@ class PgGoalQueue:
         except RuntimeError:
             conn.rollback()
             raise
-        except Exception:
+        except (self._psycopg2.Error, KeyError, TypeError, ValueError):
             conn.rollback()
             raise
 
@@ -381,7 +381,7 @@ class PgGoalQueue:
                 row = cur.fetchone()
                 conn.commit()
                 return self._normalize_row(row)
-        except Exception:
+        except (self._psycopg2.Error, KeyError, TypeError, ValueError):
             conn.rollback()
             raise
 
@@ -403,7 +403,7 @@ class PgGoalQueue:
                 row = cur.fetchone()
                 goal_exists = row is not None
             conn.commit()
-        except Exception:
+        except (self._psycopg2.Error, KeyError, TypeError, ValueError):
             conn.rollback()
             raise
 
@@ -440,7 +440,7 @@ class PgGoalQueue:
                 if row is not None:
                     updated_goal = self._normalize_row(row)
             conn.commit()
-        except Exception:
+        except (self._psycopg2.Error, KeyError, TypeError, ValueError):
             conn.rollback()
             raise
 
@@ -475,6 +475,6 @@ class PgGoalQueue:
                 )
                 for row in rows
             ]
-        except Exception:
+        except (self._psycopg2.Error, KeyError, TypeError, ValueError):
             conn.rollback()
             raise

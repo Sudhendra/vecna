@@ -14,6 +14,9 @@ from vecna.config.schema import AgentMode, VecnaConfig, create_default_config, M
 
 logger = logging.getLogger("vecna.config")
 
+CONFIG_LOAD_ERRORS = (OSError, ValueError, TypeError, KeyError)
+CONFIG_SAVE_ERRORS = (OSError, ValueError, TypeError)
+
 # Current config schema version - bump this when making breaking changes
 CURRENT_CONFIG_VERSION = 2
 
@@ -91,7 +94,7 @@ def load_config(force_reload: bool = False) -> VecnaConfig:
         logger.error(f"Invalid JSON in config file: {e}")
         # Return default config but don't overwrite the file
         return create_default_config()
-    except Exception as e:
+    except CONFIG_LOAD_ERRORS as e:
         logger.error(f"Error loading config: {e}")
         return create_default_config()
 
@@ -110,7 +113,7 @@ def save_config(config: VecnaConfig) -> None:
         _cached_config = config
         logger.debug(f"Saved config to {config_path}")
 
-    except Exception as e:
+    except CONFIG_SAVE_ERRORS as e:
         logger.error(f"Error saving config: {e}")
         raise
 

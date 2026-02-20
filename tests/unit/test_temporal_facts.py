@@ -328,17 +328,21 @@ class TestSerializableMixin:
 
     def test_mixin_exists_and_is_importable(self):
         """SerializableMixin is importable from vecna.core.types."""
-        assert SerializableMixin is not None
+        assert SerializableMixin.__module__ == "vecna.core.types"
 
     def test_fact_inherits_from_serializable_mixin(self):
         """Fact class inherits from SerializableMixin."""
         fact = Fact(content="Test")
-        assert isinstance(fact, SerializableMixin)
+        serialized = fact.to_dict()
+        assert serialized["content"] == "Test"
+        assert "timestamp" in serialized
 
     def test_belief_inherits_from_serializable_mixin(self):
         """Belief class inherits from SerializableMixin."""
         belief = Belief(content="Test")
-        assert isinstance(belief, SerializableMixin)
+        serialized = belief.to_dict()
+        assert serialized["content"] == "Test"
+        assert serialized["confidence"] == 0.6
 
     def test_mixin_to_dict_handles_datetime(self):
         """SerializableMixin.to_dict() converts datetime to ISO string."""

@@ -21,9 +21,13 @@ logger = logging.getLogger("vecna.tools.browser_tool")
 # We defer the import to runtime so the module can be loaded
 # even when playwright is not installed.
 try:
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 except ImportError:
     async_playwright = None  # type: ignore[assignment, misc]
+    PlaywrightError = RuntimeError  # type: ignore[assignment]
+    PlaywrightTimeoutError = TimeoutError  # type: ignore[assignment]
 
 
 # -- Tool Specifications --
@@ -164,13 +168,19 @@ class BrowserTool:
             )
             self.is_running = True
             logger.info("Browser started (headless=%s)", self.config.headless)
-        except Exception as e:
-            # Playwright raises its own exception types that we can't import (optional dep)
+        except (
+            PlaywrightError,
+            PlaywrightTimeoutError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            ImportError,
+        ) as e:
             # Clean up on failure
             if self._playwright_ctx:
                 try:
                     await self._playwright_ctx.__aexit__(None, None, None)
-                except Exception:
+                except (PlaywrightError, OSError, RuntimeError):
                     pass  # Cleanup: swallow during error recovery
                 self._playwright_ctx = None
             logger.error("Failed to start browser: %s", e)
@@ -181,21 +191,21 @@ class BrowserTool:
         if self._current_page:
             try:
                 await self._current_page.close()
-            except Exception:
+            except (PlaywrightError, OSError, RuntimeError):
                 pass  # Cleanup: tolerate errors during shutdown
             self._current_page = None
 
         if self._browser:
             try:
                 await self._browser.close()
-            except Exception:
+            except (PlaywrightError, OSError, RuntimeError):
                 pass  # Cleanup: tolerate errors during shutdown
             self._browser = None
 
         if self._playwright_ctx:
             try:
                 await self._playwright_ctx.__aexit__(None, None, None)
-            except Exception:
+            except (PlaywrightError, OSError, RuntimeError):
                 pass  # Cleanup: tolerate errors during shutdown
             self._playwright_ctx = None
 
@@ -255,12 +265,12 @@ class BrowserTool:
                 content=content,
             )
 
-        except (TimeoutError, OSError, ConnectionError) as e:
+        except (TimeoutError, PlaywrightTimeoutError, OSError, ConnectionError) as e:
             logger.error("Navigation error for %s: %s", url, e)
             if page:
                 try:
                     await page.close()
-                except Exception:
+                except (PlaywrightError, OSError, RuntimeError):
                     pass  # Cleanup during error handling
             return BrowserResult(
                 success=False,
@@ -268,13 +278,12 @@ class BrowserTool:
                 url=url,
                 error=f"Navigation timeout or error: {e}",
             )
-        except Exception as e:
-            # Playwright raises its own exception types (optional dep, can't narrow further)
+        except (PlaywrightError, RuntimeError, ValueError) as e:
             logger.error("Navigation error for %s: %s", url, e)
             if page:
                 try:
                     await page.close()
-                except Exception:
+                except (PlaywrightError, OSError, RuntimeError):
                     pass  # Cleanup during error handling
             return BrowserResult(
                 success=False,
@@ -319,12 +328,12 @@ class BrowserTool:
                 screenshot_b64=screenshot_b64,
             )
 
-        except (TimeoutError, OSError, ConnectionError) as e:
+        except (TimeoutError, PlaywrightTimeoutError, OSError, ConnectionError) as e:
             logger.error("Screenshot error for %s: %s", url, e)
             if page:
                 try:
                     await page.close()
-                except Exception:
+                except (PlaywrightError, OSError, RuntimeError):
                     pass  # Cleanup during error handling
             return BrowserResult(
                 success=False,
@@ -332,13 +341,12 @@ class BrowserTool:
                 url=url,
                 error=f"Screenshot timeout or error: {e}",
             )
-        except Exception as e:
-            # Playwright raises its own exception types (optional dep, can't narrow further)
+        except (PlaywrightError, RuntimeError, ValueError) as e:
             logger.error("Screenshot error for %s: %s", url, e)
             if page:
                 try:
                     await page.close()
-                except Exception:
+                except (PlaywrightError, OSError, RuntimeError):
                     pass  # Cleanup during error handling
             return BrowserResult(
                 success=False,
@@ -381,15 +389,14 @@ class BrowserTool:
                 content=content,
             )
 
-        except (TimeoutError, OSError) as e:
+        except (TimeoutError, PlaywrightTimeoutError, OSError) as e:
             logger.error("Click error for selector '%s': %s", selector, e)
             return BrowserResult(
                 success=False,
                 action="click",
                 error=f"Click error: {e}",
             )
-        except Exception as e:
-            # Playwright raises its own exception types (optional dep, can't narrow further)
+        except (PlaywrightError, RuntimeError, ValueError) as e:
             logger.error("Click error for selector '%s': %s", selector, e)
             return BrowserResult(
                 success=False,

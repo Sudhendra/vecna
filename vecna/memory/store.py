@@ -191,7 +191,7 @@ class MemoryStore:
         # Embed query
         try:
             query_emb = self.embed([query])[0]
-        except Exception:
+        except (RuntimeError, ImportError, ValueError, IndexError):
             # Fallback to keyword matching if embedding fails
             return self._keyword_search(query, top_k, item_type, min_confidence)
 

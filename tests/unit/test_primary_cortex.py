@@ -355,7 +355,7 @@ class TestCallAdapterWithTimeout:
 
         adapter = _make_adapter("sdk-adapter", weight=1.0)
 
-        class ProviderSDKError(Exception):
+        class ProviderSDKError(RuntimeError):
             pass
 
         async def bad_think(*args, **kwargs):
